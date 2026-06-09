@@ -1,0 +1,38 @@
+{
+    "name": "bitapps/bit-audit",
+    "description": "Audits the Bit ecosystem (Bit Integrations + Bit Flows): integrations, triggers/actions and per-event detail, Free + Pro combined.",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "homepage": "https://bitapps.pro",
+    "authors": [
+        {
+            "name": "Bit Apps",
+            "homepage": "https://bitapps.pro"
+        }
+    ],
+    "require": {
+        "php": ">=7.4"
+    },
+    "require-dev": {
+        "wp-coding-standards/wpcs": "^3.1",
+        "phpcompatibility/phpcompatibility-wp": "^2.1",
+        "dealerdirect/phpcodesniffer-composer-installer": "^1.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "BitApps\\Audit\\": "includes/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true,
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        }
+    },
+    "scripts": {
+        "lint": "phpcs",
+        "fix": "phpcbf",
+        "compat": "phpcs --standard=PHPCompatibility --runtime-set testVersion 7.4-8.4 includes templates bit-audit.php"
+    }
+}

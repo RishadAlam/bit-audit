@@ -1,0 +1,59 @@
+<?xml version="1.0"?>
+<ruleset name="Bit Audit">
+	<description>Coding standards for the Bit Audit plugin.</description>
+
+	<file>.</file>
+	<exclude-pattern>*/vendor/*</exclude-pattern>
+	<exclude-pattern>*/node_modules/*</exclude-pattern>
+
+	<arg name="extensions" value="php"/>
+	<arg name="colors"/>
+	<arg value="sp"/>
+	<arg name="parallel" value="8"/>
+
+	<config name="minimum_supported_wp_version" value="5.6"/>
+
+	<rule ref="WordPress">
+		<!-- PSR-4 class files are PascalCase, not WP's hyphenated file naming. -->
+		<exclude name="WordPress.Files.FileName"/>
+		<!-- The plugin uses concise doc blocks instead of full @param/@return tags. -->
+		<exclude name="Squiz.Commenting.FunctionComment"/>
+		<exclude name="Squiz.Commenting.FunctionCommentThrowTag"/>
+		<exclude name="Squiz.Commenting.VariableComment"/>
+		<exclude name="Squiz.Commenting.ClassComment"/>
+		<exclude name="Squiz.Commenting.FileComment"/>
+		<exclude name="Squiz.Commenting.InlineComment"/>
+		<exclude name="Squiz.Commenting.BlockComment"/>
+		<exclude name="Generic.Commenting.DocComment"/>
+		<!-- The Bit Apps codebase uses camelCase identifiers and modern PHP idioms by convention. -->
+		<exclude name="WordPress.NamingConventions.ValidVariableName"/>
+		<exclude name="WordPress.NamingConventions.ValidFunctionName"/>
+		<exclude name="WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound"/>
+		<exclude name="WordPress.PHP.YodaConditions"/>
+		<exclude name="Universal.Operators.DisallowShortTernary"/>
+		<exclude name="Universal.NamingConventions.NoReservedKeywordParameterNames"/>
+		<!-- False positive: $report is consumed inside the included template. -->
+		<exclude name="Generic.CodeAnalysis.UnusedFunctionParameter"/>
+		<!-- Reading bundled plugin source / streaming CSV to php://output is intentional here. -->
+		<exclude name="WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents"/>
+		<exclude name="WordPress.WP.AlternativeFunctions.file_system_operations_fclose"/>
+	</rule>
+
+	<rule ref="WordPress.WP.I18n">
+		<properties>
+			<property name="text_domain" type="array">
+				<element value="bit-audit"/>
+			</property>
+		</properties>
+	</rule>
+
+	<rule ref="WordPress.NamingConventions.PrefixAllGlobals">
+		<properties>
+			<property name="prefixes" type="array">
+				<element value="bit_audit"/>
+				<element value="BIT_AUDIT"/>
+				<element value="BitApps\Audit"/>
+			</property>
+		</properties>
+	</rule>
+</ruleset>
