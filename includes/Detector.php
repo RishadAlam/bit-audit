@@ -83,13 +83,17 @@ final class Detector {
 		if ( ! isset( self::FAMILIES[ $family ] ) ) {
 			$family = self::defaultFamily();
 		}
+		// Always build fresh while developing so source edits show immediately; cache only in production.
+		if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+			return self::auditor( $family )->report();
+		}
 		$key    = self::cacheKey( $family );
 		$cached = get_transient( $key );
 		if ( \is_array( $cached ) ) {
 			return $cached;
 		}
 		$report = self::auditor( $family )->report();
-		set_transient( $key, $report, 6 * HOUR_IN_SECONDS );
+		set_transient( $key, $report, 10 * MINUTE_IN_SECONDS );
 
 		return $report;
 	}

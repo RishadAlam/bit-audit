@@ -26,7 +26,8 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	private $feBase;
 	private $actionDirs;
 	private $feDirs;
-	private $feLabels = array();
+	private $feLabels  = array();
+	private $feModules = array();
 	private $platforms;
 
 	public function __construct() {
@@ -422,10 +423,60 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	 * @return array<int,array{name:string,slug:string,group:string,isPro:bool}>
 	 */
 	private function actionEventDetails( $slug ) {
+		// 1. The action's operation dropdown declared in the frontend `modules` list — this is exactly
+		// what the Flow builder offers, so it is authoritative for the operation set, names and tier.
+		if ( '' !== $slug ) {
+			$modules = $this->frontendModules( $slug );
+			if ( $modules ) {
+				$events = array();
+				foreach ( $modules as $mod ) {
+					$events[] = array(
+						'name'  => $mod['label'],
+						'slug'  => $mod['value'],
+						'group' => $mod['group'],
+						'isPro' => $mod['isPro'],
+					);
+				}
+
+				return $events;
+			}
+		}
+
+		// 2. Curated operation list for the handful of actions whose ops live only in irregular runtime
+		// dispatch (verified by source review; no static op list a parser can read generically).
+		if ( '' !== $slug ) {
+			$override = $this->actionOverride( $slug );
+			if ( $override ) {
+				$events = array();
+				foreach ( $override as $op ) {
+					$events[] = array(
+						'name'  => $op[0],
+						'slug'  => sanitize_title( $op[0] ),
+						'group' => '',
+						'isPro' => $op[1],
+					);
+				}
+
+				return $events;
+			}
+		}
+
+		// 3. Otherwise parse operations from the backend module (+ frontend label enrichment).
 		if ( '' !== $slug ) {
 			$dir = is_dir( $this->aFree . '/' . $slug ) ? $this->aFree . '/' . $slug
 				: ( is_dir( $this->aPro . '/' . $slug ) ? $this->aPro . '/' . $slug : '' );
 			if ( '' !== $dir ) {
+				// A webhook / automation relay (controller extends WebHooksController) is a single send.
+				if ( CatalogScanner::isWebhookRelay( $dir ) ) {
+					return array(
+						array(
+							'name'  => __( 'Send Data', 'bit-audit' ),
+							'slug'  => 'send-data',
+							'group' => '',
+							'isPro' => false,
+						),
+					);
+				}
 				$labels = $this->frontendLabels( $slug );
 				$events = array();
 				foreach ( CatalogScanner::biActionOperations( $dir ) as $op ) {
@@ -504,6 +555,18 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		return $this->feLabels[ $key ];
 	}
 
+	/** The action's operation list (`modules`) from its frontend folder, resolved by slug. */
+	private function frontendModules( $slug ) {
+		$key = CatalogScanner::normalizeName( $slug );
+		if ( isset( $this->feModules[ $key ] ) ) {
+			return $this->feModules[ $key ];
+		}
+		$dirs                    = $this->feDirMap();
+		$this->feModules[ $key ] = isset( $dirs[ $key ] ) ? CatalogScanner::frontendActionModules( $dirs[ $key ] ) : array();
+
+		return $this->feModules[ $key ];
+	}
+
 	/** Normalized frontend integration folder name => absolute path. */
 	private function feDirMap() {
 		if ( null !== $this->feDirs ) {
@@ -516,6 +579,40 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		$this->feDirs = $map;
 
 		return $map;
+	}
+
+	/**
+	 * Verified operation lists for actions that dispatch operations at runtime (insert/update probes,
+	 * numeric mainAction/actionId switches, or $actions->flag sub-ops) with no static op list any
+	 * generic parser can read. Each op is [label, isPro]. Tiers are a best estimate — adjust if needed.
+	 *
+	 * @return array<int,array{0:string,1:bool}>|null
+	 */
+	private function actionOverride( $slug ) {
+		$pro  = static function ( array $names ) {
+			return array_map( static fn( $n ) => array( $n, true ), $names );
+		};
+		$free = static function ( array $names ) {
+			return array_map( static fn( $n ) => array( $n, false ), $names );
+		};
+		$map  = array(
+			// CRMs — operations are Pro.
+			'activecampaign'  => $pro( array( 'Create Contact', 'Update Contact', 'Add to List', 'Add Tags', 'Add Account Contact' ) ),
+			'keap'            => $pro( array( 'Add Contact', 'Add Tags' ) ),
+			'salesmate'       => $pro( array( 'Create Contact', 'Create Deal', 'Create Company', 'Create Product' ) ),
+			'zohorecruit'     => $pro( array( 'Create Record in Module', 'Add Note to Record', 'Create Related Records' ) ),
+			'zohocrm'         => $pro( array( 'Insert Record', 'Upsert Records', 'Tag Records', 'Add Attachment', 'Trigger Workflow', 'Send to Approval', 'Trigger Blueprint', 'Apply Assignment Rule', 'Capture GCLID' ) ),
+			// Email / list services.
+			'sendfox'         => $free( array( 'Create List', 'Create Contact', 'Unsubscribe Contact' ) ),
+			'moosend'         => $free( array( 'Subscribe', 'Unsubscribe', 'Unsubscribe from List' ) ),
+			'constantcontact' => $free( array( 'Add Contact', 'Update Contact' ) ),
+			'benchmark'       => $free( array( 'Add Contact', 'Update Contact' ) ),
+			'sendinblue'      => $free( array( 'Add Contact', 'Update Contact', 'Double Opt-in Contact' ) ),
+			'zagomail'        => $free( array( 'Create Subscriber', 'Update Subscriber', 'Add Tags' ) ),
+		);
+		$key = CatalogScanner::normalizeName( $slug );
+
+		return isset( $map[ $key ] ) ? $map[ $key ] : null;
 	}
 
 	/** Human operation label: humanize the key, dropping the integration's own slug prefix. */

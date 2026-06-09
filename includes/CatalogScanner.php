@@ -398,6 +398,17 @@ final class CatalogScanner {
 		return false;
 	}
 
+	/** True when the action is a webhook/automation relay — its controller extends WebHooksController. */
+	public static function isWebhookRelay( $absDir ) {
+		foreach ( glob( $absDir . '/*Controller.php' ) ?: array() as $file ) {
+			if ( preg_match( '/class\s+\w+\s+extends\s+WebHooksController\b/', self::read( $file ) ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	/** True when the source performs a direct base record-insert (the action's Free operation). */
 	private static function hasBaseInsert( $blob ) {
 		return (bool) preg_match(
@@ -496,6 +507,101 @@ final class CatalogScanner {
 		}
 
 		return $labels;
+	}
+
+	/**
+	 * An action's operation list, read from the `modules` array its frontend declares (either
+	 * `const modules = [ … ]` or a `modules: [ … ]` property, e.g. ZendeskSupportStaticData.modules).
+	 * Each entry is `{ value|name: '<op>', label: __('Real Name'), is_pro?: bool, group?: '…' }`.
+	 * This is exactly the operation dropdown the Flow builder shows, so it is the authoritative
+	 * per-action operation set. Field-option dropdowns (priorities, statuses, …) are NOT named
+	 * `modules`, so they are not picked up.
+	 *
+	 * @return array<int,array{value:string,label:string,isPro:bool,group:string}>
+	 */
+	public static function frontendActionModules( $absDir ) {
+		if ( ! is_dir( $absDir ) ) {
+			return array();
+		}
+		$files = array_merge( glob( $absDir . '/*.jsx' ) ?: array(), glob( $absDir . '/*.js' ) ?: array() );
+
+		// Pass 1: an explicit `modules` array (ZendeskSupport, WP ERP, HefflCRM, …).
+		foreach ( $files as $file ) {
+			$ops = self::parseModulesArray( self::read( $file ) );
+			if ( $ops ) {
+				return $ops;
+			}
+		}
+		// Pass 2: an operation list identified by per-entry `is_pro` flags — the operation dropdown
+		// (e.g. Registration, PostCreation in <X>HelperFunction.js). Field-option dropdowns
+		// (priorities, statuses, languages) carry no is_pro, so they are not matched.
+		foreach ( $files as $file ) {
+			$ops = self::parseIsProActionOps( self::read( $file ) );
+			if ( $ops ) {
+				return $ops;
+			}
+		}
+
+		return array();
+	}
+
+	/** Parse the `modules: [ … ]` / `const modules = [ … ]` operation array (bracket-aware). */
+	private static function parseModulesArray( $contents ) {
+		if ( ! preg_match( '/\bmodules\s*[:=]\s*\[/', $contents, $m, PREG_OFFSET_CAPTURE ) ) {
+			return array();
+		}
+		$i     = $m[0][1] + \strlen( $m[0][0] );
+		$len   = \strlen( $contents );
+		$depth = 1;
+		$start = $i;
+		while ( $i < $len && $depth > 0 ) {
+			if ( '[' === $contents[ $i ] ) {
+				++$depth;
+			} elseif ( ']' === $contents[ $i ] ) {
+				--$depth;
+			}
+			++$i;
+		}
+
+		return self::moduleObjects( substr( $contents, $start, $i - $start ) );
+	}
+
+	/** Treat every `{ value|name, label, is_pro }` object in a file as one operation (≥2 to qualify). */
+	private static function parseIsProActionOps( $contents ) {
+		$ops = array();
+		if ( preg_match_all( '/\{[^{}]*\}/', $contents, $objs ) ) {
+			foreach ( $objs[0] as $obj ) {
+				if ( false === strpos( $obj, 'is_pro' ) && false === strpos( $obj, 'isPro' ) ) {
+					continue;
+				}
+				foreach ( self::moduleObjects( $obj ) as $op ) {
+					$ops[ $op['value'] ] = $op;
+				}
+			}
+		}
+
+		return \count( $ops ) >= 2 ? array_values( $ops ) : array();
+	}
+
+	/** Extract `{ value|name, label, is_pro?, group? }` operation entries from a JS object/array blob. */
+	private static function moduleObjects( $block ) {
+		$ops = array();
+		if ( preg_match_all( '/\{[^{}]*\}/', $block, $objs ) ) {
+			foreach ( $objs[0] as $obj ) {
+				if ( ! preg_match( "/\b(?:value|name)\s*:\s*'([^']+)'/", $obj, $vm )
+					|| ! preg_match( "/\blabel\s*:\s*(?:__\(\s*)?'([^']+)'/", $obj, $lm ) ) {
+					continue;
+				}
+				$ops[] = array(
+					'value' => $vm[1],
+					'label' => $lm[1],
+					'isPro' => (bool) preg_match( '/\bis_?[pP]ro\s*:\s*true/', $obj ),
+					'group' => self::firstMatch( "/\bgroup\s*:\s*'([^']+)'/", $obj ),
+				);
+			}
+		}
+
+		return $ops;
 	}
 
 	/**
