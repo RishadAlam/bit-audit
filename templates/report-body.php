@@ -5,9 +5,26 @@ namespace BitApps\Audit;
 defined( 'ABSPATH' ) || exit;
 
 /** @var array $report */
+$family = $report['family'];
+
+/*
+ * The catalog is read from the locally installed plugin's source. When the plugin isn't installed, or
+ * its frontend source is missing (a built/minified release), render a state panel and stop.
+ */
+if ( isset( $report['available'] ) && ! $report['available'] ) {
+	$message = isset( $report['message'] ) ? $report['message'] : __( 'The catalog source could not be loaded.', 'bit-audit' );
+	?>
+	<div class="ba-state">
+		<span class="ba-state-icon dashicons dashicons-info-outline"></span>
+		<h2 class="ba-state-title"><?php echo esc_html( $report['label'] ); ?></h2>
+		<p class="ba-state-text"><?php echo esc_html( $message ); ?></p>
+	</div>
+	<?php
+	return;
+}
+
 $catalog   = $report['catalog'];
 $changelog = $report['changelog'];
-$family    = $report['family'];
 ?>
 
 <?php if ( ! $report['presence']['free'] && ! $report['presence']['pro'] ) : ?>

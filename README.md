@@ -33,11 +33,13 @@ Bit Audit is **read‑only**: it never writes to your flows or integrations, sto
 - **Cached** for performance, with a **Refresh** button to rebuild after the source plugins change.
 - Instant first paint, async plugin switch with a skeleton loader, count‑up animations, accessible tab pattern, full i18n.
 
+> **Internal tool.** Bit Audit reads each plugin's catalog from a **locally installed source checkout** (`git clone`). A built/minified release strips the frontend source it needs, so install the audited plugins from source. No tokens, no network. Meant for Bit Apps team sites.
+
 ## Requirements
 
 - WordPress **5.6+**
 - PHP **7.4+**
-- The plugins you want to audit (Bit Integrations and/or Bit Flows) present in `wp-content/plugins/`. Bit Audit reads them from disk; they do not need to be active (it will show the shipped catalog and tell you if a plugin is installed but inactive).
+- A **source checkout** of the plugins you want to audit (Bit Integrations and/or Bit Flows) in `wp-content/plugins/` — i.e. `git clone`, so the `frontend/src/…` source is present (a built/minified release won't work). They do **not** need to be active, only installed.
 
 ## Installation
 
@@ -67,22 +69,23 @@ The plugin runs even without `composer install` — it falls back to a built‑i
 
 ## How it works
 
-Bit Audit does not invent numbers — it reads each plugin's own registries:
+Everything is read from the locally installed plugin's source — install the audited plugins via `git clone` so the frontend is present:
 
-- **Bit Integrations triggers (173):** the `trigger/list` route behind the Flow builder's *SelectTrigger* — Free trigger modules whose controller exposes `info()`, plus the `AllTriggersName` Pro catalog. Trigger event names come from each `{platform}/get` callback (`StaticData::tasks()` or the callback's hard‑coded list).
-- **Bit Integrations actions (186):** the `integs[]` list in `SelectAction.jsx`, each resolved to its backend module. Operations are parsed from `RecordApiHelper`/Controller (`switch`/selector/`LogHandler`/`Config::withPrefix`), and **names + per‑operation tier are taken from the frontend modules list** (`{ value, label, is_pro }`).
-- **Bit Flows (294 apps):** each `_<app>Machines.ts` root machine declares the app's full `triggers[]` and `actions[]` with `label`, `machineSlug` and `isPro` — parsed with brace‑aware scanning so nested objects / template literals are never dropped.
+- **Bit Integrations triggers (173):** the `AllTriggersName` Pro catalog + Free trigger controllers exposing `info()`. Trigger events come from each `{platform}/get` callback (`StaticData::tasks()`).
+- **Bit Integrations actions (186):** the `integs[]` list in `SelectAction.jsx` plus each integration's `modules` list (operation labels + tiers); operations fall back to the backend (`RecordApiHelper`/Controller) when an integration declares no frontend modules.
+- **Bit Flows (294 apps):** each `_<app>Machines.ts` root machine (`triggers[]` / `actions[]`, `label`, `machineSlug`, `isPro`); per‑trigger WP hooks come from the backend `Hooks.php`.
 
-**Tiers.** `Free` / `Pro` / `Both` is derived from the events themselves (not from which folder ships them): an integration with both Free and Pro events is **Both**.
+Reports are cached in a transient; **Refresh** rebuilds after the source changes.
+
+**Tiers.** `Free` / `Pro` / `Both` is derived from the events themselves: an integration with both Free and Pro events is **Both**.
 
 **Metrics.** *Total Integrations* = triggers + actions (an app offering both counts on each side). *Platform Integrations* = the unique union.
 
-> Counts are produced by static source‑parsing. They match the products' published catalogs, but are an estimate of intent rather than a runtime enumeration — see [Caveats](#caveats).
-
 ## Caveats
 
-- A handful of actions whose operations are selected dynamically at runtime (e.g. the Zoho module pickers) collapse to a single **"Store Record"** — there is no static operation list to read.
-- This is heuristic source‑parsing, so it can drift if the upstream plugins change their code style. Use **Refresh** after updating a source plugin.
+- **Needs the frontend source on disk.** If an audited plugin is a built/minified release (no `frontend/src`), or isn't installed, its report shows a notice instead of a catalog. Install it via `git clone`.
+- A handful of actions whose operations are selected dynamically at runtime (e.g. the Zoho module pickers) collapse to a single **"Store Record"** / **"Dynamic Event"** — there is no static operation list to read.
+- Counts reflect the source checked out on disk. Use **Refresh** to re-read after you update the source.
 
 ## Development
 

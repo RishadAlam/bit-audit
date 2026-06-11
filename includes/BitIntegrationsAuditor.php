@@ -12,10 +12,11 @@ defined( 'ABSPATH' ) || exit;
  *                controller exposes info(), plus the AllTriggersName Pro catalog. (173)
  *   - Actions  : the SelectAction.jsx `integs` list, each resolved to its backend module. (186)
  *
- * "Total Integrations" sums the two (an app offering both counts on each side); "Platform
- * Integrations" is the unique union. Per-integration trigger/action events are parsed from each
- * module's backend Hooks.php; integrations whose events register dynamically (e.g. Action Hook,
- * or webhook/automation actions with no backend module) surface a single "Dynamic Event".
+ * Source: everything is read from the locally installed plugin (a source checkout). The FRONTEND
+ * catalog source (SelectAction.jsx + the per-integration `modules` lists) provides the action list,
+ * operation labels and tiers; the BACKEND (trigger task lists, action operations) provides event
+ * detail. A built/minified release strips the frontend, so if it is absent report() returns an
+ * `available => false` sentinel for the dashboard to surface.
  */
 final class BitIntegrationsAuditor implements AuditorInterface {
 
@@ -24,6 +25,9 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	private $aFree;
 	private $aPro;
 	private $feBase;
+	private $feSelectAction;
+	private $sourceError;
+	private $resolved = false;
 	private $actionDirs;
 	private $feDirs;
 	private $feLabels  = array();
@@ -31,30 +35,80 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	private $platforms;
 
 	public function __construct() {
-		$this->tFree  = Detector::path( 'bit-integrations/backend/Triggers' );
-		$this->tPro   = Detector::path( 'bit-integrations-pro/backend/Triggers' );
-		$this->aFree  = Detector::path( 'bit-integrations/backend/Actions' );
-		$this->aPro   = Detector::path( 'bit-integrations-pro/backend/Actions' );
-		$this->feBase = Detector::path( 'bit-integrations/frontend/src/components/AllIntegrations' );
+		// Backend = locally installed plugin (ships its PHP). Dirs resolved by text domain.
+		$this->tFree = Detector::freePath( 'bit-integrations', 'backend/Triggers' );
+		$this->tPro  = Detector::proPath( 'bit-integrations', 'backend/Triggers' );
+		$this->aFree = Detector::freePath( 'bit-integrations', 'backend/Actions' );
+		$this->aPro  = Detector::proPath( 'bit-integrations', 'backend/Actions' );
+	}
+
+	/** Locate the frontend catalog source on disk (once); records an error for report() if absent. */
+	private function resolveSource() {
+		if ( $this->resolved ) {
+			return;
+		}
+		$this->resolved = true;
+		$base           = Detector::freePath( 'bit-integrations', 'frontend/src/components' );
+		if ( ! is_dir( $base . '/AllIntegrations' ) ) {
+			$this->sourceError = new \WP_Error(
+				'no_source',
+				__( 'Bit Integrations frontend source was not found. Install it as a source checkout (git clone) — a built release strips the frontend.', 'bit-audit' )
+			);
+
+			return;
+		}
+		$this->feBase         = $base . '/AllIntegrations';
+		$this->feSelectAction = $base . '/Flow/New/SelectAction.jsx';
 	}
 
 	public function report() {
-		$fam     = Detector::detect()['bit-integrations'];
+		$fam      = Detector::detect()['bit-integrations'];
+		$presence = array(
+			'free'   => $fam['free'],
+			'pro'    => $fam['pro'],
+			'active' => $fam['active'],
+		);
+		// A complete audit needs BOTH plugins installed: Free ships the catalog + free modules, Pro ships
+		// the pro modules' backend (pro trigger events, pro action operations). Report each individually.
+		// (Active state is not required — everything is read from the files on disk.)
+		if ( ! $fam['free'] ) {
+			return $this->unavailable( $presence, 'free_missing', __( 'Bit Integrations (Free) is not installed. Install it to run the audit.', 'bit-audit' ) );
+		}
+		if ( ! $fam['pro'] ) {
+			return $this->unavailable( $presence, 'pro_missing', __( 'Bit Integrations Pro is not installed. Both Free and Pro are required for a complete audit.', 'bit-audit' ) );
+		}
+
+		$this->resolveSource();
+		if ( $this->sourceError ) {
+			return $this->unavailable( $presence, $this->sourceError->get_error_code(), $this->sourceError->get_error_message() );
+		}
+
 		$catalog = $this->catalog();
 
 		return array(
 			'family'    => 'bit-integrations',
 			'label'     => 'Bit Integrations',
-			'presence'  => array(
-				'free'   => $fam['free'],
-				'pro'    => $fam['pro'],
-				'active' => $fam['active'],
-			),
+			'presence'  => $presence,
+			'available' => true,
 			'catalog'   => $catalog,
 			'changelog' => CatalogScanner::resolveChangelogSlugs(
-				CatalogScanner::parseChangelogLatest( Detector::path( 'bit-integrations/readme.txt' ) ),
+				CatalogScanner::parseChangelogLatest( Detector::freePath( 'bit-integrations', 'readme.txt' ) ),
 				$catalog['per_integration']
 			),
+		);
+	}
+
+	/** @return array<string,mixed> an unavailable-report sentinel for the dashboard to surface. */
+	private function unavailable( array $presence, $reason, $message ) {
+		return array(
+			'family'    => 'bit-integrations',
+			'label'     => 'Bit Integrations',
+			'presence'  => $presence,
+			'available' => false,
+			'reason'    => $reason,
+			'message'   => $message,
+			'catalog'   => null,
+			'changelog' => null,
 		);
 	}
 
@@ -86,7 +140,6 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 				$a_events += $p['action_events'];
 				$a_free   += $p['action_free'];
 				$a_pro    += $p['action_pro'];
-				// An action app counts as Free when it offers any Free operation, else Pro.
 				$p['action_free'] > 0 ? ++$aa_free : ++$aa_pro;
 			}
 			$rows[] = array(
@@ -109,8 +162,8 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		);
 
 		return array(
-			'total_integrations'    => $trigger_count + $action_count, // sum; an app with both counts on each side
-			'platform_integrations' => \count( $rows ),                // unique union
+			'total_integrations'    => $trigger_count + $action_count,
+			'platform_integrations' => \count( $rows ),
 			'trigger_apps'          => $trigger_count,
 			'action_apps'           => $action_count,
 			'apps'                  => array(
@@ -140,6 +193,18 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	}
 
 	public function events( $key ) {
+		$d = Detector::detect()['bit-integrations'];
+		if ( empty( $d['free'] ) || empty( $d['pro'] ) ) {
+			return array(
+				'name'     => CatalogScanner::humanize( $key ),
+				'slug'     => $key,
+				'isPro'    => true,
+				'found'    => false,
+				'triggers' => array(),
+				'actions'  => array(),
+			);
+		}
+		$this->resolveSource();
 		$platforms = $this->platforms();
 		if ( ! isset( $platforms[ $key ] ) ) {
 			return array(
@@ -172,6 +237,12 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	/** Build (once) the unified platform catalog keyed by normalized integration name. */
 	private function platforms() {
 		if ( null !== $this->platforms ) {
+			return $this->platforms;
+		}
+		$this->resolveSource();
+		if ( $this->sourceError ) {
+			$this->platforms = array();
+
 			return $this->platforms;
 		}
 		$out = array();
@@ -228,8 +299,6 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			}
 		}
 
-		// Tier (Free / Pro / Both) from the events themselves: Pro trigger tier, plus per-operation
-		// Pro/Free action events. An integration with both Free and Pro events is "Both".
 		foreach ( $out as &$p ) {
 			$has_free   = ( $p['isTrigger'] && ! $p['triggerPro'] ) || $p['action_free'] > 0;
 			$has_pro    = ( $p['isTrigger'] && $p['triggerPro'] ) || $p['action_pro'] > 0;
@@ -244,8 +313,8 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	}
 
 	/**
-	 * Trigger registry = what SelectTrigger lists (the `trigger/list` route): Free trigger modules
-	 * whose controller exposes info(), plus the AllTriggersName Pro catalog.
+	 * Trigger registry = Free trigger modules whose backend controller exposes info() (read locally),
+	 * plus the AllTriggersName Pro catalog (read locally).
 	 *
 	 * @return array<string,array{name:string,slug:string,isPro:bool}> keyed by normalized name
 	 */
@@ -264,8 +333,7 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			}
 		}
 
-		// AllTriggersName is the Pro catalog — every entry is a Pro trigger (its own isPro flag).
-		foreach ( CatalogScanner::parseAllTriggers( Detector::path( 'bit-integrations/backend/Core/Util/AllTriggersName.php' ) ) as $row ) {
+		foreach ( CatalogScanner::parseAllTriggers( Detector::freePath( 'bit-integrations', 'backend/Core/Util/AllTriggersName.php' ) ) as $row ) {
 			$key = CatalogScanner::normalizeName( $row['name'] );
 			if ( ! isset( $reg[ $key ] ) ) {
 				$reg[ $key ] = array(
@@ -280,14 +348,14 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	}
 
 	/**
-	 * Action registry = the SelectAction.jsx `integs` list, each resolved to its backend module.
-	 * Tier is decided per operation from the module source (see actionEventDetails), not here.
+	 * Action registry = the SelectAction.jsx `integs` list (read from GitHub), each resolved to its
+	 * backend module folder (resolved against the locally installed Actions dirs).
 	 *
 	 * @return array<string,array{name:string,slug:string}> keyed by normalized name
 	 */
 	private function actionRegistry() {
 		$reg = array();
-		foreach ( CatalogScanner::parseSelectActionTypes( Detector::path( 'bit-integrations/frontend/src/components/Flow/New/SelectAction.jsx' ) ) as $name ) {
+		foreach ( CatalogScanner::parseSelectActionTypes( $this->feSelectAction ) as $name ) {
 			$key = CatalogScanner::normalizeName( $name );
 			if ( isset( $reg[ $key ] ) ) {
 				continue;
@@ -313,19 +381,16 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		if ( isset( $map[ $key ] ) ) {
 			return $map[ $key ];
 		}
-		// "Make(Integromat)" / "Brevo(SendinBlue)" — match the parenthetical service name.
 		if ( preg_match( '/\(([^)]+)\)/', $name, $m ) ) {
 			$inner = CatalogScanner::normalizeName( $m[1] );
 			if ( isset( $map[ $inner ] ) ) {
 				return $map[ $inner ];
 			}
 		}
-		// Text before the bracket.
 		$outer = CatalogScanner::normalizeName( preg_replace( '/\(.*$/', '', $name ) );
 		if ( '' !== $outer && isset( $map[ $outer ] ) ) {
 			return $map[ $outer ];
 		}
-		// "WP User Registration" → Registration, "GoHighLevel" → HighLevel: longest dir-name suffix.
 		$best = '';
 		$len  = 2;
 		foreach ( $map as $dk => $slug ) {
@@ -338,7 +403,7 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		return $best;
 	}
 
-	/** Normalized-name => actual folder slug across Free + Pro Actions (Free wins on overlap). */
+	/** Normalized-name => actual folder slug across the locally installed Free + Pro Actions. */
 	private function actionDirMap() {
 		if ( null !== $this->actionDirs ) {
 			return $this->actionDirs;
@@ -355,9 +420,9 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	}
 
 	/**
-	 * Trigger events for a module: the task list returned by its `{platform}/get` route, which for
-	 * static triggers resolves to StaticData::tasks(). Triggers without a static task list fall back
-	 * to the concrete WP hooks bound in Hooks.php; a fully dynamic trigger surfaces one "Dynamic Event".
+	 * Trigger events for a module: the task list its `{platform}/get` route returns (StaticData::tasks()),
+	 * read from the locally installed backend; falls back to the callback's hard-coded titles, then the
+	 * concrete WP hooks in Hooks.php, then a single "Dynamic Event".
 	 *
 	 * @return array<int,array{name:string,hook:string,slug:string,group:string,isPro:bool}>
 	 */
@@ -367,7 +432,6 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			$dir = is_dir( $this->tFree . '/' . $slug ) ? $this->tFree . '/' . $slug
 				: ( is_dir( $this->tPro . '/' . $slug ) ? $this->tPro . '/' . $slug : '' );
 			if ( '' !== $dir ) {
-				// Primary: the {platform}/get task list (StaticData::tasks()).
 				foreach ( CatalogScanner::biStaticTaskLabels( $dir . '/StaticData.php' ) as $hook => $label ) {
 					$events[] = array(
 						'name'  => $label,
@@ -377,7 +441,6 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 						'isPro' => (bool) $isPro,
 					);
 				}
-				// Secondary: titles the {platform}/get callback hard-codes (e.g. Academy Lms).
 				if ( ! $events ) {
 					foreach ( CatalogScanner::biTriggerGetEventNames( $dir ) as $name ) {
 						$events[] = array(
@@ -389,7 +452,6 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 						);
 					}
 				}
-				// Fallback: concrete WP hooks bound in Hooks.php.
 				if ( ! $events ) {
 					foreach ( CatalogScanner::biTriggerEvents( $dir . '/Hooks.php' ) as $ev ) {
 						if ( '' === $ev['hook'] ) {
@@ -415,16 +477,13 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	}
 
 	/**
-	 * Action events for a module: the operations parsed from its backend RecordApiHelper/Controller
-	 * (see CatalogScanner::biActionOperations) — each tagged Free or Pro from its `Config::with(Free)Prefix`
-	 * wrapper. An action with no parseable operation is a single Free store-record. Webhook/automation
-	 * actions with no backend module surface one "Dynamic Event".
+	 * Action events for a module: the operation dropdown declared in the frontend `modules` list
+	 * (read from GitHub — authoritative names + tier), then a curated override, then the backend
+	 * RecordApiHelper/Controller operations (read locally).
 	 *
 	 * @return array<int,array{name:string,slug:string,group:string,isPro:bool}>
 	 */
 	private function actionEventDetails( $slug ) {
-		// 1. The action's operation dropdown declared in the frontend `modules` list — this is exactly
-		// what the Flow builder offers, so it is authoritative for the operation set, names and tier.
 		if ( '' !== $slug ) {
 			$modules = $this->frontendModules( $slug );
 			if ( $modules ) {
@@ -442,8 +501,6 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			}
 		}
 
-		// 2. Curated operation list for the handful of actions whose ops live only in irregular runtime
-		// dispatch (verified by source review; no static op list a parser can read generically).
 		if ( '' !== $slug ) {
 			$override = $this->actionOverride( $slug );
 			if ( $override ) {
@@ -461,12 +518,10 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			}
 		}
 
-		// 3. Otherwise parse operations from the backend module (+ frontend label enrichment).
 		if ( '' !== $slug ) {
 			$dir = is_dir( $this->aFree . '/' . $slug ) ? $this->aFree . '/' . $slug
 				: ( is_dir( $this->aPro . '/' . $slug ) ? $this->aPro . '/' . $slug : '' );
 			if ( '' !== $dir ) {
-				// A webhook / automation relay (controller extends WebHooksController) is a single send.
 				if ( CatalogScanner::isWebhookRelay( $dir ) ) {
 					return array(
 						array(
@@ -482,9 +537,7 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 				foreach ( CatalogScanner::biActionOperations( $dir ) as $op ) {
 					$name  = $this->actionOpName( $op, $slug );
 					$isPro = (bool) $op['isPro'];
-					// The frontend modules list carries the user-facing label (and Pro flag) keyed by
-					// the operation value — prefer it over the humanized case slug.
-					$fe = $this->frontendLabelFor( $op['key'], $slug, $labels );
+					$fe    = $this->frontendLabelFor( $op['key'], $slug, $labels );
 					if ( null !== $fe ) {
 						$name = $fe['label'];
 						if ( null !== $fe['isPro'] ) {
@@ -499,7 +552,6 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 					);
 				}
 				if ( ! $events ) {
-					// Single execution endpoint with no declared operation — store-record (Free).
 					$events[] = array(
 						'name'  => __( 'Store Record', 'bit-audit' ),
 						'slug'  => $slug,
@@ -512,7 +564,6 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			}
 		}
 
-		// No backend module (e.g. IFTTT, Zapier-style webhook) — dynamic, available on the free tier.
 		return array(
 			array(
 				'name'  => __( 'Dynamic Event', 'bit-audit' ),
@@ -523,7 +574,7 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		);
 	}
 
-	/** Frontend label entry matching an operation value ('' if none). Tries the slug-stripped key too. */
+	/** Frontend label entry matching an operation value (null if none). Tries the slug-stripped key too. */
 	private function frontendLabelFor( $key, $slug, array $labels ) {
 		if ( ! $labels ) {
 			return null;
@@ -543,7 +594,7 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		return null;
 	}
 
-	/** Frontend modules value => label/isPro map for an action, resolved by its folder. */
+	/** Frontend modules value => label/isPro map for an action, resolved by its folder (from GitHub). */
 	private function frontendLabels( $slug ) {
 		$key = CatalogScanner::normalizeName( $slug );
 		if ( isset( $this->feLabels[ $key ] ) ) {
@@ -555,7 +606,7 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		return $this->feLabels[ $key ];
 	}
 
-	/** The action's operation list (`modules`) from its frontend folder, resolved by slug. */
+	/** The action's operation list (`modules`) from its frontend folder (from GitHub), resolved by slug. */
 	private function frontendModules( $slug ) {
 		$key = CatalogScanner::normalizeName( $slug );
 		if ( isset( $this->feModules[ $key ] ) ) {
@@ -567,7 +618,7 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		return $this->feModules[ $key ];
 	}
 
-	/** Normalized frontend integration folder name => absolute path. */
+	/** Normalized frontend integration folder name => absolute path (GitHub-fetched). */
 	private function feDirMap() {
 		if ( null !== $this->feDirs ) {
 			return $this->feDirs;
@@ -583,8 +634,8 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 
 	/**
 	 * Verified operation lists for actions that dispatch operations at runtime (insert/update probes,
-	 * numeric mainAction/actionId switches, or $actions->flag sub-ops) with no static op list any
-	 * generic parser can read. Each op is [label, isPro]. Tiers are a best estimate — adjust if needed.
+	 * numeric switches, $actions->flag sub-ops) with no static op list any generic parser can read.
+	 * Each op is [label, isPro].
 	 *
 	 * @return array<int,array{0:string,1:bool}>|null
 	 */
@@ -596,13 +647,11 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			return array_map( static fn( $n ) => array( $n, false ), $names );
 		};
 		$map  = array(
-			// CRMs — operations are Pro.
 			'activecampaign'  => $pro( array( 'Create Contact', 'Update Contact', 'Add to List', 'Add Tags', 'Add Account Contact' ) ),
 			'keap'            => $pro( array( 'Add Contact', 'Add Tags' ) ),
 			'salesmate'       => $pro( array( 'Create Contact', 'Create Deal', 'Create Company', 'Create Product' ) ),
 			'zohorecruit'     => $pro( array( 'Create Record in Module', 'Add Note to Record', 'Create Related Records' ) ),
 			'zohocrm'         => $pro( array( 'Insert Record', 'Upsert Records', 'Tag Records', 'Add Attachment', 'Trigger Workflow', 'Send to Approval', 'Trigger Blueprint', 'Apply Assignment Rule', 'Capture GCLID' ) ),
-			// Email / list services.
 			'sendfox'         => $free( array( 'Create List', 'Create Contact', 'Unsubscribe Contact' ) ),
 			'moosend'         => $free( array( 'Subscribe', 'Unsubscribe', 'Unsubscribe from List' ) ),
 			'constantcontact' => $free( array( 'Add Contact', 'Update Contact' ) ),
@@ -610,7 +659,7 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			'sendinblue'      => $free( array( 'Add Contact', 'Update Contact', 'Double Opt-in Contact' ) ),
 			'zagomail'        => $free( array( 'Create Subscriber', 'Update Subscriber', 'Add Tags' ) ),
 		);
-		$key = CatalogScanner::normalizeName( $slug );
+		$key  = CatalogScanner::normalizeName( $slug );
 
 		return isset( $map[ $key ] ) ? $map[ $key ] : null;
 	}

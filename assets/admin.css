@@ -109,6 +109,23 @@
 .bit-audit .ba-banner-warn { background: #fff7ed; color: #9a3412; border: 1px solid #fed7aa; }
 .bit-audit .ba-banner-info { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
 
+/* ---------- Empty / error state (source could not be fetched) ---------- */
+.bit-audit .ba-state {
+	display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px;
+	background: var(--ba-card); border: 1px solid var(--ba-line); border-radius: var(--ba-radius);
+	box-shadow: var(--ba-shadow); padding: 56px 28px; margin-top: 4px;
+}
+.bit-audit .ba-state-icon {
+	font-size: 38px; width: 64px; height: 64px; line-height: 64px; border-radius: 50%;
+	color: #b45309; background: #fff7ed; border: 1px solid #fed7aa;
+}
+.bit-audit .ba-state-title { margin: 6px 0 0; font-size: 18px; font-weight: 700; color: var(--ba-ink); }
+.bit-audit .ba-state-text { margin: 0; max-width: 520px; font-size: 13px; color: var(--ba-muted); line-height: 1.6; }
+.bit-audit .ba-state-code {
+	margin: 2px 0 0; padding: 10px 14px; font-size: 12px; background: #0f172a; color: #e2e8f0;
+	border-radius: 8px; white-space: pre-wrap; word-break: break-all;
+}
+
 /* ---------- Search ---------- */
 .bit-audit .ba-search { position: relative; }
 .bit-audit .ba-search .dashicons { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--ba-muted); font-size: 16px; }
