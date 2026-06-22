@@ -650,24 +650,50 @@ final class CatalogScanner {
 	}
 
 	/**
-	 * The action catalog the Flow builder offers: every `{ type: '...' }` in the
-	 * SelectAction.jsx `integs` array, in source order.
+	 * The action catalog the Flow builder offers: every `{ type: '...', is_pro: bool }` in the
+	 * SelectAction.jsx `integs` array, in source order. The `is_pro` flag is the product's own
+	 * authoritative "fully pro" signal for an action — true only when EVERY operation the action
+	 * exposes is Pro (the Flow builder ANDs each module's `is_pro`). It is the source of truth for
+	 * the action's tier; do not re-derive "fully pro" from backend heuristics.
 	 *
-	 * @return string[] action display names
+	 * @return array<int,array{name:string,isPro:bool}>
 	 */
-	public static function parseSelectActionTypes( $absFile ) {
+	public static function parseSelectActions( $absFile ) {
 		$contents = self::read( $absFile );
+		$rows     = array();
 		if ( '' === $contents ) {
-			return array();
+			return $rows;
 		}
 		$start = strpos( $contents, 'integs = [' );
 		if ( false === $start ) {
-			return array();
+			return $rows;
 		}
 		$end   = strpos( $contents, "\n  ]", $start );
 		$block = false === $end ? substr( $contents, $start ) : substr( $contents, $start, $end - $start );
 
-		return preg_match_all( "/type:\s*'([^']+)'/", $block, $m ) ? $m[1] : array();
+		// Each `{ type: '...', logo?: '...', is_pro: bool }` is one action entry.
+		if ( preg_match_all( '/\{[^{}]*\}/', $block, $objs ) ) {
+			foreach ( $objs[0] as $obj ) {
+				if ( ! preg_match( "/type:\s*'([^']+)'/", $obj, $tm ) ) {
+					continue;
+				}
+				$rows[] = array(
+					'name'  => $tm[1],
+					'isPro' => (bool) preg_match( '/is_pro:\s*true/', $obj ),
+				);
+			}
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * The action catalog display names only (SelectAction.jsx `integs`), in source order.
+	 *
+	 * @return string[] action display names
+	 */
+	public static function parseSelectActionTypes( $absFile ) {
+		return array_column( self::parseSelectActions( $absFile ), 'name' );
 	}
 
 	/** Trigger catalog names (with isPro) from AllTriggersName.php. */

@@ -140,7 +140,8 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 				$a_events += $p['action_events'];
 				$a_free   += $p['action_free'];
 				$a_pro    += $p['action_pro'];
-				$p['action_free'] > 0 ? ++$aa_free : ++$aa_pro;
+				// App tier = the product's own `is_pro` flag (fully pro), not the per-event split.
+				! empty( $p['action_is_pro'] ) ? ++$aa_pro : ++$aa_free;
 			}
 			$rows[] = array(
 				'name'           => $p['name'],
@@ -219,7 +220,7 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		$p = $platforms[ $key ];
 
 		$triggers = $p['isTrigger'] ? $this->triggerEventDetails( $p['trigger_slug'], $p['triggerPro'] ) : array();
-		$actions  = $p['isAction'] ? $this->actionEventDetails( $p['action_slug'] ) : array();
+		$actions  = $p['isAction'] ? $this->actionEventDetails( $p['action_slug'], ! empty( $p['action_is_pro'] ) ) : array();
 
 		return array(
 			'name'     => $p['name'],
@@ -264,7 +265,7 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		}
 
 		foreach ( $this->actionRegistry() as $key => $a ) {
-			$events     = $this->actionEventDetails( $a['slug'] );
+			$events     = $this->actionEventDetails( $a['slug'], $a['isPro'] );
 			$action_pro = 0;
 			foreach ( $events as $e ) {
 				if ( $e['isPro'] ) {
@@ -276,6 +277,7 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			if ( isset( $out[ $key ] ) ) {
 				$out[ $key ]['isAction']      = true;
 				$out[ $key ]['action_slug']   = $a['slug'];
+				$out[ $key ]['action_is_pro'] = $a['isPro'];
 				$out[ $key ]['action_events'] = \count( $events );
 				$out[ $key ]['action_free']   = $action_free;
 				$out[ $key ]['action_pro']    = $action_pro;
@@ -291,6 +293,7 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 					'triggerPro'     => false,
 					'trigger_slug'   => '',
 					'action_slug'    => $a['slug'],
+					'action_is_pro'  => $a['isPro'],
 					'trigger_events' => 0,
 					'action_events'  => \count( $events ),
 					'action_free'    => $action_free,
@@ -300,8 +303,12 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		}
 
 		foreach ( $out as &$p ) {
-			$has_free   = ( $p['isTrigger'] && ! $p['triggerPro'] ) || $p['action_free'] > 0;
-			$has_pro    = ( $p['isTrigger'] && $p['triggerPro'] ) || $p['action_pro'] > 0;
+			$action_is_pro = ! empty( $p['action_is_pro'] );
+			// Action tier is driven by the product's own `is_pro` flag (authoritative "fully pro"),
+			// not re-derived from heuristics: fully pro ⇒ Pro; otherwise the free user can run ≥1
+			// event, so the action contributes Free (and Pro too when it also has a Pro add-on).
+			$has_free   = ( $p['isTrigger'] && ! $p['triggerPro'] ) || ( $p['isAction'] && ! $action_is_pro );
+			$has_pro    = ( $p['isTrigger'] && $p['triggerPro'] ) || ( $p['isAction'] && ( $action_is_pro || $p['action_pro'] > 0 ) );
 			$p['tier']  = ( $has_free && $has_pro ) ? 'both' : ( $has_pro ? 'pro' : 'free' );
 			$p['isPro'] = 'pro' === $p['tier'];
 		}
@@ -348,21 +355,24 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	}
 
 	/**
-	 * Action registry = the SelectAction.jsx `integs` list (read from GitHub), each resolved to its
-	 * backend module folder (resolved against the locally installed Actions dirs).
+	 * Action registry = the SelectAction.jsx `integs` list, each resolved to its backend module
+	 * folder (resolved against the locally installed Actions dirs). Each entry carries the product's
+	 * own `is_pro` flag — the authoritative "fully pro" signal (true only when every operation the
+	 * action exposes is Pro); the audit uses it as the action's tier instead of re-deriving it.
 	 *
-	 * @return array<string,array{name:string,slug:string}> keyed by normalized name
+	 * @return array<string,array{name:string,slug:string,isPro:bool}> keyed by normalized name
 	 */
 	private function actionRegistry() {
 		$reg = array();
-		foreach ( CatalogScanner::parseSelectActionTypes( $this->feSelectAction ) as $name ) {
-			$key = CatalogScanner::normalizeName( $name );
+		foreach ( CatalogScanner::parseSelectActions( $this->feSelectAction ) as $entry ) {
+			$key = CatalogScanner::normalizeName( $entry['name'] );
 			if ( isset( $reg[ $key ] ) ) {
 				continue;
 			}
 			$reg[ $key ] = array(
-				'name' => $name,
-				'slug' => $this->resolveActionSlug( $name ),
+				'name'  => $entry['name'],
+				'slug'  => $this->resolveActionSlug( $entry['name'] ),
+				'isPro' => $entry['isPro'],
 			);
 		}
 
@@ -477,13 +487,52 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	}
 
 	/**
-	 * Action events for a module: the operation dropdown declared in the frontend `modules` list
-	 * (read from GitHub — authoritative names + tier), then a curated override, then the backend
-	 * RecordApiHelper/Controller operations (read locally).
+	 * Action events for a module, with per-event tier reconciled against the product's authoritative
+	 * `is_pro` flag for the action (from SelectAction.jsx). A fully-pro action ⇒ every event is Pro.
+	 * A not-fully-pro action must leave the free user ≥1 runnable event, so if every detected event
+	 * came out Pro the flag overrides and they are treated as Free (covers actions whose frontend
+	 * declares no per-op `is_pro`, e.g. CRMs the Flow builder shows as free).
 	 *
 	 * @return array<int,array{name:string,slug:string,group:string,isPro:bool}>
 	 */
-	private function actionEventDetails( $slug ) {
+	private function actionEventDetails( $slug, $appIsPro = false ) {
+		$events = $this->actionEventsRaw( $slug );
+		if ( ! $events ) {
+			return $events;
+		}
+		if ( $appIsPro ) {
+			foreach ( $events as &$e ) {
+				$e['isPro'] = true;
+			}
+			unset( $e );
+
+			return $events;
+		}
+		$all_pro = true;
+		foreach ( $events as $e ) {
+			if ( empty( $e['isPro'] ) ) {
+				$all_pro = false;
+				break;
+			}
+		}
+		if ( $all_pro ) {
+			foreach ( $events as &$e ) {
+				$e['isPro'] = false;
+			}
+			unset( $e );
+		}
+
+		return $events;
+	}
+
+	/**
+	 * Raw action events for a module: the operation dropdown declared in the frontend `modules` list
+	 * (authoritative names + tier), then a curated override, then the backend RecordApiHelper /
+	 * Controller operations (read locally). Tiers are reconciled by actionEventDetails().
+	 *
+	 * @return array<int,array{name:string,slug:string,group:string,isPro:bool}>
+	 */
+	private function actionEventsRaw( $slug ) {
 		if ( '' !== $slug ) {
 			$modules = $this->frontendModules( $slug );
 			if ( $modules ) {
