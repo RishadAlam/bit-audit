@@ -3,7 +3,7 @@
  * Plugin Name:       Bit Audit
  * Plugin URI:        https://bitapps.pro
  * Description:        Audits the Bit ecosystem. Pick a plugin (Bit Integrations or Bit Flows), combine its Free + Pro, and report total/platform integrations, triggers and actions, and per-event detail with Free/Pro/Both tiers. Reads the catalog from a locally installed source checkout of the plugin.
- * Version:           1.1.1
+ * Version:           1.1.2
  * Author:            Bit Apps
  * Author URI:        https://bitapps.pro
  * Requires at least: 5.6
@@ -20,7 +20,7 @@ namespace BitApps\Audit;
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'BIT_AUDIT_VERSION', '1.1.1' );
+define( 'BIT_AUDIT_VERSION', '1.1.2' );
 define( 'BIT_AUDIT_FILE', __FILE__ );
 define( 'BIT_AUDIT_DIR', plugin_dir_path( __FILE__ ) );
 define( 'BIT_AUDIT_URL', plugin_dir_url( __FILE__ ) );

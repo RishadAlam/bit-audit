@@ -4,7 +4,7 @@ Tags: bit integrations, bit flows, audit, integrations, report
 Requires at least: 5.6
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.1.1
+Stable tag: 1.1.2
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -44,6 +44,9 @@ It reads the plugin's frontend source from disk. If the plugin isn't installed, 
 The report is cached. Click **Refresh** to rebuild.
 
 == Changelog ==
+
+= 1.1.2 =
+* Bit Integrations trigger names now come from each platform controller's `info()` metadata instead of the directory name, so abbreviated folders such as CF7, WC and WPF display as Contact Form 7, WooCommerce and WPForms.
 
 = 1.1.1 =
 * Bit Integrations action tiers now follow the Flow builder's own `is_pro` flag (an action is Pro only when every operation it offers is Pro), instead of re-deriving the tier from backend operation heuristics. Fixes six actions (ActiveCampaign, GetResponse, Keap, Salesmate, Zoho CRM, Zoho Recruit) that were over-counted as Pro: the Free/Pro action split is now 159 Free / 27 Pro.
