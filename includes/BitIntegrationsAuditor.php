@@ -331,7 +331,10 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		foreach ( CatalogScanner::listDirs( $this->tFree ) as $slug ) {
 			$ctrl = $this->tFree . '/' . $slug . '/' . $slug . 'Controller.php';
 			if ( is_file( $ctrl ) && preg_match( '/function\s+info\s*\(/', CatalogScanner::read( $ctrl ) ) ) {
-				$name = CatalogScanner::humanize( $slug );
+				$name = CatalogScanner::biTriggerInfoName( $ctrl );
+				if ( '' === $name ) {
+					$name = CatalogScanner::humanize( $slug );
+				}
 				$reg[ CatalogScanner::normalizeName( $name ) ] = array(
 					'name'  => $name,
 					'slug'  => $slug,

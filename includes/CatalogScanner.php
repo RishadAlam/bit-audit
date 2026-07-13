@@ -167,6 +167,37 @@ final class CatalogScanner {
 	 * ------------------------------------------------------------------ */
 
 	/**
+	 * User-facing trigger name from a platform controller's info() return array.
+	 *
+	 * @return string Empty when info() or its literal name property cannot be read.
+	 */
+	public static function biTriggerInfoName( $absFile ) {
+		$contents = self::read( $absFile );
+		if ( '' === $contents || ! preg_match( '/function\s+info\s*\([^)]*\)(?:\s*:\s*[^\{]+)?\s*\{/', $contents, $match, PREG_OFFSET_CAPTURE ) ) {
+			return '';
+		}
+
+		$start = $match[0][1] + \strlen( $match[0][0] );
+		$depth = 1;
+		$i     = $start;
+		$len   = \strlen( $contents );
+		while ( $i < $len && $depth > 0 ) {
+			if ( '{' === $contents[ $i ] ) {
+				++$depth;
+			} elseif ( '}' === $contents[ $i ] ) {
+				--$depth;
+			}
+			++$i;
+		}
+		$body = substr( $contents, $start, $i - $start );
+		if ( ! preg_match( '/[\'\"]name[\'\"]\s*=>\s*(?:__\(\s*)?([\'\"])(.*?)\1/s', $body, $name ) ) {
+			return '';
+		}
+
+		return trim( $name[2] );
+	}
+
+	/**
 	 * Trigger events from a Bit Integrations trigger `Hooks.php`.
 	 * Each `Hooks::add('hook', [Ctrl, 'method'])` / `add_action('hook', …)` = one event.
 	 *
