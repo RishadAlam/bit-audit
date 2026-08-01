@@ -433,9 +433,10 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	}
 
 	/**
-	 * Trigger events for a module: the task list its `{platform}/get` route returns (StaticData::tasks()),
-	 * read from the locally installed backend; falls back to the callback's hard-coded titles, then the
-	 * concrete WP hooks in Hooks.php, then a single "Dynamic Event".
+	 * Trigger events for a module: the task list its `{platform}/get` route returns — StaticData::tasks(),
+	 * or the same list declared inside the controller — read from the locally installed backend; falls
+	 * back to the callback's hard-coded titles, then the concrete WP hooks in Hooks.php, then a single
+	 * "Dynamic Event".
 	 *
 	 * @return array<int,array{name:string,hook:string,slug:string,group:string,isPro:bool}>
 	 */
@@ -445,7 +446,13 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			$dir = is_dir( $this->tFree . '/' . $slug ) ? $this->tFree . '/' . $slug
 				: ( is_dir( $this->tPro . '/' . $slug ) ? $this->tPro . '/' . $slug : '' );
 			if ( '' !== $dir ) {
-				foreach ( CatalogScanner::biStaticTaskLabels( $dir . '/StaticData.php' ) as $hook => $label ) {
+				// The task list lives in StaticData.php for most modules; a few declare it inside the
+				// controller instead (BitCrm's private events()), so fall back to the whole module dir.
+				$tasks = CatalogScanner::biStaticTaskLabels( $dir . '/StaticData.php' );
+				if ( ! $tasks ) {
+					$tasks = CatalogScanner::biTriggerTaskLabels( $dir );
+				}
+				foreach ( $tasks as $hook => $label ) {
 					$events[] = array(
 						'name'  => $label,
 						'hook'  => $hook,

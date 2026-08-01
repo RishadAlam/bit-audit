@@ -526,14 +526,69 @@ final class CatalogScanner {
 	 * @return array<string,string>
 	 */
 	public static function biStaticTaskLabels( $absFile ) {
-		$contents = self::read( $absFile );
-		$labels   = array();
+		return self::pairTaskTokens( self::read( $absFile ) );
+	}
+
+	/**
+	 * Pair each `form_name` with its `triggered_entity_id`. The two keys are scanned independently and
+	 * paired in source order rather than matched by one spanning pattern, because the task lists are
+	 * not uniform: some modules write the hook first (Post), and labels use either quote style with
+	 * escaped apostrophes inside (`__("User's Membership Deleted")`). A spanning match mis-pairs the
+	 * former (label N with hook N+1) and truncates the latter at the apostrophe.
+	 *
+	 * @return array<string,string> hook => label
+	 */
+	private static function pairTaskTokens( $contents ) {
+		$labels = array();
 		if ( '' === $contents ) {
 			return $labels;
 		}
-		if ( preg_match_all( '/[\'"]form_name[\'"]\s*=>\s*(?:__\(\s*)?[\'"]([^\'"]+)[\'"].*?[\'"]triggered_entity_id[\'"]\s*=>\s*[\'"]([^\'"]+)[\'"]/s', $contents, $m, PREG_SET_ORDER ) ) {
-			foreach ( $m as $row ) {
-				$labels[ $row[2] ] = $row[1];
+		// 1 = key, 2 = quote char, 3 = value (escape-aware, must close on the same quote).
+		if ( ! preg_match_all(
+			'/[\'"](form_name|triggered_entity_id)[\'"]\s*=>\s*(?:__\(\s*)?([\'"])((?:\\\\.|(?!\2).)*)\2/s',
+			$contents,
+			$matches,
+			PREG_SET_ORDER
+		) ) {
+			return $labels;
+		}
+
+		$name = null;
+		$hook = null;
+		foreach ( $matches as $token ) {
+			$value = str_replace( array( "\\'", '\\"' ), array( "'", '"' ), $token[3] );
+			if ( 'form_name' === $token[1] ) {
+				$name = $value; // A second label before its hook means the previous entry had none.
+			} else {
+				$hook = $value;
+			}
+			if ( null === $name || null === $hook ) {
+				continue;
+			}
+			if ( ! isset( $labels[ $hook ] ) ) {
+				$labels[ $hook ] = $name;
+			}
+			$name = null;
+			$hook = null;
+		}
+
+		return $labels;
+	}
+
+	/**
+	 * The same task list as biStaticTaskLabels(), for trigger modules that declare it inside their
+	 * controller (e.g. BitCrm's private events()) instead of a dedicated StaticData.php. Scans every
+	 * PHP file in the module directory; the first file to name a hook wins.
+	 *
+	 * @return array<string,string>
+	 */
+	public static function biTriggerTaskLabels( $absDir ) {
+		$labels = array();
+		foreach ( glob( $absDir . '/*.php' ) ?: array() as $file ) {
+			foreach ( self::biStaticTaskLabels( $file ) as $hook => $label ) {
+				if ( ! isset( $labels[ $hook ] ) ) {
+					$labels[ $hook ] = $label;
+				}
 			}
 		}
 
