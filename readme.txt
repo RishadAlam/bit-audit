@@ -4,7 +4,7 @@ Tags: bit integrations, bit flows, audit, integrations, report
 Requires at least: 5.6
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.1.2
+Stable tag: 1.1.3
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -44,6 +44,10 @@ It reads the plugin's frontend source from disk. If the plugin isn't installed, 
 The report is cached. Click **Refresh** to rebuild.
 
 == Changelog ==
+
+= 1.1.3 =
+* Bit Integrations trigger events are now read from the module's own task list even when it is declared inside the controller rather than a `StaticData.php`, so Bit CRM reports its 66 named events instead of 58 raw hook names.
+* Fixed two trigger task-list parsing faults: modules that list the hook before its label (Post) paired every event with the wrong hook, and labels containing an apostrophe (WooCommerce Memberships) were truncated. Nine modules' event counts are corrected and 69 more now show their real event names.
 
 = 1.1.2 =
 * Bit Integrations trigger names now come from each platform controller's `info()` metadata instead of the directory name, so abbreviated folders such as CF7, WC and WPF display as Contact Form 7, WooCommerce and WPForms.
