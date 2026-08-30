@@ -453,22 +453,24 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 					$tasks = CatalogScanner::biTriggerTaskLabels( $dir );
 				}
 				foreach ( $tasks as $hook => $label ) {
-					$events[] = array(
-						'name'  => $label,
+					list( $name, $eventPro ) = CatalogScanner::splitProLabel( $label );
+					$events[]                = array(
+						'name'  => $name,
 						'hook'  => $hook,
 						'slug'  => $hook,
 						'group' => '',
-						'isPro' => (bool) $isPro,
+						'isPro' => (bool) $isPro || $eventPro,
 					);
 				}
 				if ( ! $events ) {
-					foreach ( CatalogScanner::biTriggerGetEventNames( $dir ) as $name ) {
-						$events[] = array(
+					foreach ( CatalogScanner::biTriggerGetEventNames( $dir ) as $label ) {
+						list( $name, $eventPro ) = CatalogScanner::splitProLabel( $label );
+						$events[]                = array(
 							'name'  => $name,
 							'hook'  => '',
 							'slug'  => '',
 							'group' => '',
-							'isPro' => (bool) $isPro,
+							'isPro' => (bool) $isPro || $eventPro,
 						);
 					}
 				}
@@ -561,6 +563,26 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		}
 
 		if ( '' !== $slug ) {
+			$dir = $this->actionDir( $slug );
+			if ( '' !== $dir ) {
+				$modules = CatalogScanner::biActionRouteModules( $dir );
+				if ( $modules ) {
+					$events = array();
+					foreach ( $modules as $mod ) {
+						$events[] = array(
+							'name'  => $mod['label'],
+							'slug'  => $mod['value'],
+							'group' => $mod['group'],
+							'isPro' => $mod['isPro'],
+						);
+					}
+
+					return $events;
+				}
+			}
+		}
+
+		if ( '' !== $slug ) {
 			$override = $this->actionOverride( $slug );
 			if ( $override ) {
 				$events = array();
@@ -578,8 +600,7 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		}
 
 		if ( '' !== $slug ) {
-			$dir = is_dir( $this->aFree . '/' . $slug ) ? $this->aFree . '/' . $slug
-				: ( is_dir( $this->aPro . '/' . $slug ) ? $this->aPro . '/' . $slug : '' );
+			$dir = $this->actionDir( $slug );
 			if ( '' !== $dir ) {
 				if ( CatalogScanner::isWebhookRelay( $dir ) ) {
 					return array(
@@ -631,6 +652,15 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 				'isPro' => false,
 			),
 		);
+	}
+
+	/** The action module's directory in the locally installed Free or Pro plugin ('' if neither). */
+	private function actionDir( $slug ) {
+		if ( is_dir( $this->aFree . '/' . $slug ) ) {
+			return $this->aFree . '/' . $slug;
+		}
+
+		return is_dir( $this->aPro . '/' . $slug ) ? $this->aPro . '/' . $slug : '';
 	}
 
 	/** Frontend label entry matching an operation value (null if none). Tries the slug-stripped key too. */

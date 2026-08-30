@@ -55,6 +55,62 @@ final class CatalogScanner {
 		return is_readable( $absFile ) ? (string) file_get_contents( $absFile ) : '';
 	}
 
+	/**
+	 * PHP source with every comment blanked out. Event lists are mined with regexes, and the plugins
+	 * keep retired events as commented-out array entries (e.g. WooCommerce's deprecated subscription
+	 * and booking events sit in a doc block above the live list), so scanning raw source reports
+	 * events the Flow builder no longer offers.
+	 */
+	public static function readPhp( $absFile ) {
+		return self::stripPhpComments( self::read( $absFile ) );
+	}
+
+	/** Replace each comment token with its own newlines, keeping every other token verbatim. */
+	private static function stripPhpComments( $contents ) {
+		if ( '' === $contents || ! \function_exists( 'token_get_all' ) ) {
+			return $contents;
+		}
+		// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- malformed source must not surface a tokenizer warning in the admin screen.
+		$tokens = @token_get_all( $contents );
+		if ( ! $tokens ) {
+			return $contents;
+		}
+		$out = '';
+		foreach ( $tokens as $token ) {
+			if ( ! \is_array( $token ) ) {
+				$out .= $token;
+				continue;
+			}
+			if ( T_COMMENT === $token[0] || T_DOC_COMMENT === $token[0] ) {
+				$out .= str_repeat( "\n", substr_count( $token[1], "\n" ) );
+				continue;
+			}
+			$out .= $token[1];
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Split the plugins' own inline Pro marker off an event label: both catalogs suffix a Pro-only
+	 * event's user-facing label with a bare " Pro" / " pro" ("Add the user to a group pro"), which is
+	 * a tier badge rather than part of the name.
+	 *
+	 * @return array{0:string,1:bool} [label without the marker, isPro]
+	 */
+	public static function splitProLabel( $label ) {
+		if ( preg_match( '/^(.*\S)\s+[Pp]ro$/', (string) $label, $m ) ) {
+			return array( $m[1], true );
+		}
+
+		return array( (string) $label, false );
+	}
+
+	/** Unescape a captured single/double quoted PHP string body. */
+	private static function unescapeQuoted( $value ) {
+		return str_replace( array( "\\'", '\\"' ), array( "'", '"' ), $value );
+	}
+
 	/*
 	------------------------------------------------------------------ *
 	 *  Bit Flows catalog (frontend machine root files; on-disk folder is `bit-pi`)
@@ -148,7 +204,7 @@ final class CatalogScanner {
 	/** Map machineSlug => WP hook from a bit-pi `<Name>Hooks.php` register() array. */
 	public static function piHookMap( $absFile ) {
 		$map      = array();
-		$contents = self::read( $absFile );
+		$contents = self::readPhp( $absFile );
 		if ( '' === $contents ) {
 			return $map;
 		}
@@ -172,7 +228,7 @@ final class CatalogScanner {
 	 * @return string Empty when info() or its literal name property cannot be read.
 	 */
 	public static function biTriggerInfoName( $absFile ) {
-		$contents = self::read( $absFile );
+		$contents = self::readPhp( $absFile );
 		if ( '' === $contents || ! preg_match( '/function\s+info\s*\([^)]*\)(?:\s*:\s*[^\{]+)?\s*\{/', $contents, $match, PREG_OFFSET_CAPTURE ) ) {
 			return '';
 		}
@@ -204,7 +260,7 @@ final class CatalogScanner {
 	 * @return array<int,array{hook:string,method:string}>
 	 */
 	public static function biTriggerEvents( $absFile ) {
-		$contents = self::read( $absFile );
+		$contents = self::readPhp( $absFile );
 		$events   = array();
 		if ( '' === $contents ) {
 			return $events;
@@ -237,7 +293,7 @@ final class CatalogScanner {
 	 * @return array<int,array{slug:string,method:string}>
 	 */
 	public static function biActionEvents( $absFile ) {
-		$contents = self::read( $absFile );
+		$contents = self::readPhp( $absFile );
 		$events   = array();
 		if ( '' === $contents ) {
 			return $events;
@@ -252,6 +308,67 @@ final class CatalogScanner {
 		}
 
 		return $events;
+	}
+
+	/**
+	 * An action's operation list served by its own backend route instead of declared in the frontend
+	 * (MailChimp's `mChimp_refresh_modules` route returns `['name' => …, 'label' => …]` entries). The
+	 * base list is what a Free install offers; entries added inside the module's Pro gate
+	 * (`Helper::isProActivate()`) are the Pro operations.
+	 *
+	 * @return array<int,array{value:string,label:string,isPro:bool,group:string}>
+	 */
+	public static function biActionRouteModules( $absDir ) {
+		$routes = self::readPhp( $absDir . '/Routes.php' );
+		if ( '' === $routes || ! preg_match( "/Route::(?:get|post)\(\s*'[^']*modules?'\s*,\s*\[[^,\]]*,\s*'([^']+)'/i", $routes, $rm ) ) {
+			return array();
+		}
+		$body = self::methodBody( $absDir, $rm[1] );
+		if ( '' === $body ) {
+			return array();
+		}
+		$gate = preg_match( '/isProActivate\s*\(|isPro\s*\(/', $body, $gm, PREG_OFFSET_CAPTURE ) ? $gm[0][1] : \strlen( $body );
+
+		$ops = array();
+		if ( ! preg_match_all( "/'name'\s*=>\s*'([^']+)'\s*,\s*'label'\s*=>\s*(?:__\(\s*)?'([^']+)'/s", $body, $m, PREG_SET_ORDER | PREG_OFFSET_CAPTURE ) ) {
+			return $ops;
+		}
+		foreach ( $m as $entry ) {
+			list( $label, $labelled_pro ) = self::splitProLabel( $entry[2][0] );
+			$ops[]                        = array(
+				'value' => $entry[1][0],
+				'label' => $label,
+				'isPro' => $labelled_pro || $entry[0][1] > $gate,
+				'group' => '',
+			);
+		}
+
+		return $ops;
+	}
+
+	/** Body of a named method, scanned across every PHP file of a module directory ('' if absent). */
+	private static function methodBody( $absDir, $method ) {
+		$blob = '';
+		foreach ( glob( $absDir . '/*.php' ) ?: array() as $file ) {
+			$blob .= "\n" . self::readPhp( $file );
+		}
+		if ( ! preg_match( '/function\s+' . preg_quote( $method, '/' ) . '\s*\([^)]*\)(?:\s*:\s*[^\{]+)?\s*\{/', $blob, $m, PREG_OFFSET_CAPTURE ) ) {
+			return '';
+		}
+		$start = $m[0][1] + \strlen( $m[0][0] );
+		$depth = 1;
+		$i     = $start;
+		$len   = \strlen( $blob );
+		while ( $i < $len && $depth > 0 ) {
+			if ( '{' === $blob[ $i ] ) {
+				++$depth;
+			} elseif ( '}' === $blob[ $i ] ) {
+				--$depth;
+			}
+			++$i;
+		}
+
+		return substr( $blob, $start, $i - $start );
 	}
 
 	/**
@@ -270,7 +387,7 @@ final class CatalogScanner {
 	public static function biActionOperations( $absDir ) {
 		$blob = '';
 		foreach ( glob( $absDir . '/*.php' ) ?: array() as $file ) {
-			$blob .= "\n" . self::read( $file );
+			$blob .= "\n" . self::readPhp( $file );
 		}
 		if ( '' === trim( $blob ) ) {
 			return array();
@@ -353,15 +470,11 @@ final class CatalogScanner {
 			}
 			// Wrapped Pro / Free hooks first, so their tier sticks; the cleaner names below replace the
 			// hook label for the same operation (utility & data-fetch hooks are dropped as noise).
-			if ( preg_match_all( "/Config::withPrefix\(\s*'([^']+)'/", $blob, $pm ) ) {
-				foreach ( $pm[1] as $hook ) {
-					$add( $hook, true, true );
-				}
+			foreach ( self::prefixedHookNames( $blob, 'withPrefix' ) as $hook ) {
+				$add( $hook, true, true );
 			}
-			if ( preg_match_all( "/Config::withFreePrefix\(\s*'([^']+)'/", $blob, $fm ) ) {
-				foreach ( $fm[1] as $hook ) {
-					$add( $hook, false, true );
-				}
+			foreach ( self::prefixedHookNames( $blob, 'withFreePrefix' ) as $hook ) {
+				$add( $hook, false, true );
 			}
 			// Operation names assigned to the log's $typeName (e.g. GoHighLevel 'Create Contact').
 			if ( preg_match_all( "/\\\$type_?[nN]ame\s*=\s*'([^']+)'/", $blob, $tn ) ) {
@@ -413,6 +526,53 @@ final class CatalogScanner {
 		return array_values( $ops );
 	}
 
+	/**
+	 * `Config::with(Free)Prefix('name')` occurrences that name a hook. The same helper also namespaces
+	 * transient keys and error codes (`$cache_key = Config::withPrefix('gamipress_rank_types')`,
+	 * `new WP_Error(Config::withPrefix('asana_unknown_action'))`), which are not operations, so those
+	 * two call sites are skipped. The hook itself is often on the line after `Hooks::filter(`, so the
+	 * call cannot be required to sit inside one.
+	 *
+	 * @return string[]
+	 */
+	private static function prefixedHookNames( $blob, $method ) {
+		$names = array();
+		if ( ! preg_match_all( "/(.{0,90})Config::{$method}\(\s*'([^']+)'/s", $blob, $m, PREG_SET_ORDER ) ) {
+			return $names;
+		}
+		foreach ( $m as $match ) {
+			if ( self::isNonHookPrefixContext( $match[1] ) ) {
+				continue;
+			}
+			$names[] = $match[2];
+		}
+
+		return $names;
+	}
+
+	/**
+	 * True when the text leading up to a `Config::with*Prefix()` call shows it is not naming an
+	 * operation hook: a transient key, an error code, a string compared against a field prefix, or a
+	 * filter whose result is assigned into the flow builder's response payload
+	 * (`$response['tags'] = Hooks::apply(Config::withPrefix('zbigin_get_tags'), …)`) — that populates a
+	 * dropdown, it does not run an operation.
+	 */
+	private static function isNonHookPrefixContext( $before ) {
+		$patterns = array(
+			'/\$\w*(?:cache|transient|option)\w*\s*=\s*$/i',
+			'/WP_Error\(\s*$/',
+			'/strpos\(.*$/',
+			'/\$\w+\[[^\]]*\]\s*=\s*(?:\(\s*\w+\s*\)\s*)?(?:\w+::\w+\(\s*)?$/',
+		);
+		foreach ( $patterns as $pattern ) {
+			if ( preg_match( $pattern, $before ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	/** A utility / data-fetch hook or a generic log category, not a user-facing action operation. */
 	private static function isNoiseOp( $name ) {
 		$n       = self::normalizeName( $name );
@@ -457,58 +617,125 @@ final class CatalogScanner {
 	 * @return string[]
 	 */
 	public static function biTriggerGetEventNames( $absDir ) {
-		$routes = self::read( $absDir . '/Routes.php' );
+		$routes = self::readPhp( $absDir . '/Routes.php' );
 		if ( '' === $routes || ! preg_match( "/Route::(?:get|post)\(\s*'[^']*\/get'\s*,\s*\[[^,\]]*,\s*'([^']+)'/", $routes, $rm ) ) {
 			return array();
 		}
-		$method = $rm[1];
-
-		$blob = '';
-		foreach ( glob( $absDir . '/*.php' ) ?: array() as $file ) {
-			$blob .= "\n" . self::read( $file );
-		}
-		if ( ! preg_match( '/function\s+' . preg_quote( $method, '/' ) . '\s*\([^)]*\)\s*\{/', $blob, $mm, PREG_OFFSET_CAPTURE ) ) {
+		$body = self::methodBody( $absDir, $rm[1] );
+		if ( '' === $body ) {
 			return array();
 		}
-		$start = $mm[0][1] + \strlen( $mm[0][0] );
-		$depth = 1;
-		$i     = $start;
-		$len   = \strlen( $blob );
-		while ( $i < $len && $depth > 0 ) {
-			if ( '{' === $blob[ $i ] ) {
-				++$depth;
-			} elseif ( '}' === $blob[ $i ] ) {
-				--$depth;
-			}
-			++$i;
+		// The callback often only forwards the list (`wp_send_json_success(VoxelTasks::getTaskList())`),
+		// so the delegate's body is appended and scanned with it.
+		foreach ( self::delegatedMethods( $body ) as $delegate ) {
+			$body .= "\n" . self::methodBody( $absDir, $delegate );
 		}
-		$body = substr( $blob, $start, $i - $start );
 
 		$names = array();
-		// Explicit 'title' => '…' entries always win.
-		if ( preg_match_all( "/'title'\s*=>\s*(?:__\(\s*)?'([^']+)'/", $body, $tm ) ) {
-			foreach ( $tm[1] as $title ) {
-				$names[ $title ] = true;
+		// A task object built positionally (`new Task(SOME_CONST, __('Title'), __('Note'))`) names the
+		// event in its second argument; the third is a description, so the generic sweep below cannot
+		// be used for these.
+		if ( preg_match_all( '/new\s+[A-Za-z_\\\\][\w\\\\]*\s*\(\s*[^,()]+,\s*(?:__\(\s*)?([\'"])((?:\\\\.|(?!\1).)*)\1/s', $body, $cm, PREG_SET_ORDER ) && \count( $cm ) >= 2 ) {
+			foreach ( $cm as $match ) {
+				$name = self::unescapeQuoted( $match[2] );
+				if ( self::looksLikeEventName( $name ) ) {
+					$names[ $name ] = true;
+				}
 			}
 		}
-		// Otherwise a hard-coded list of translatable titles (the $types/$tasks array).
-		if ( ! $names && preg_match_all( "/__\(\s*'([^']+)'/", $body, $um ) ) {
-			foreach ( $um[1] as $title ) {
+		// Explicit 'title' => '…' entries always win. The string is read escape-aware (1 = quote char,
+		// 2 = body) because titles carry apostrophes — `__('User\'s role change')`.
+		if ( ! $names && preg_match_all( '/[\'"]title[\'"]\s*=>\s*(?:__\(\s*)?([\'"])((?:\\\\.|(?!\1).)*)\1/s', $body, $tm, PREG_SET_ORDER ) ) {
+			foreach ( $tm as $title ) {
+				$name = self::unescapeQuoted( $title[2] );
+				if ( ! self::isInterpolated( $name ) ) {
+					$names[ $name ] = true;
+				}
+			}
+		}
+		// Otherwise a hard-coded list of translatable titles (the $types/$tasks array). A single
+		// translatable string is more likely a notice than an event list, so this sweep needs two.
+		if ( ! $names && preg_match_all( '/__\(\s*([\'"])((?:\\\\.|(?!\1).)*)\1/s', $body, $um, PREG_SET_ORDER ) ) {
+			foreach ( $um as $match ) {
+				$title = self::unescapeQuoted( $match[2] );
 				if ( self::looksLikeEventName( $title ) ) {
 					$names[ $title ] = true;
 				}
 			}
-			// A single translatable string is more likely a label/notice than an event list.
 			if ( \count( $names ) < 2 ) {
 				$names = array();
 			}
 		}
-
+		// Last, the plain (untranslated) string list a callback loops over to build its titles
+		// (Fluent Booking's `$types = ['Booking Scheduled', …]`).
+		if ( ! $names && false !== strpos( $body, "'title'" ) ) {
+			foreach ( self::plainStringList( $body ) as $title ) {
+				if ( self::looksLikeEventName( $title ) ) {
+					$names[ $title ] = true;
+				}
+			}
+		}
 		return array_keys( $names );
 	}
 
-	/** Heuristic: a short title, not an error/notice string. */
+	/**
+	 * Static calls a route callback forwards its list to (`VoxelTasks::getTaskList()`), excluding the
+	 * plugin's own guard/response helpers.
+	 *
+	 * @return string[] method names
+	 */
+	private static function delegatedMethods( $body ) {
+		$methods = array();
+		if ( ! preg_match_all( '/\b[A-Za-z_][\w\\\\]*::(\w+)\s*\(\s*\)/', $body, $m ) ) {
+			return $methods;
+		}
+		foreach ( $m[1] as $method ) {
+			if ( ! preg_match( '/^(?:is|has|get)?(?:PluginActive|Active|Installed|Activated)$/i', $method ) ) {
+				$methods[ $method ] = true;
+			}
+		}
+
+		return array_keys( $methods );
+	}
+
+	/**
+	 * The first plain array of quoted strings in a body (`['Booking Scheduled', 'Booking Completed']`).
+	 *
+	 * @return string[]
+	 */
+	private static function plainStringList( $body ) {
+		if ( ! preg_match( '/=\s*\[\s*([\'"][^\[\]]*?[\'"])\s*,?\s*\]/s', $body, $m ) ) {
+			return array();
+		}
+		if ( ! preg_match_all( '/([\'"])((?:\\\\.|(?!\1).)*)\1/s', $m[1], $sm, PREG_SET_ORDER ) ) {
+			return array();
+		}
+		$values = array();
+		foreach ( $sm as $match ) {
+			// Only a list of written-out titles qualifies; an options/query array (`'post_type'`,
+			// `'publish'`) is not an event list.
+			if ( ! preg_match( '/^[A-Z][^_]*\s\S/', $match[2] ) ) {
+				return array();
+			}
+			$values[] = self::unescapeQuoted( $match[2] );
+		}
+
+		return \count( $values ) >= 2 ? $values : array();
+	}
+
+	/**
+	 * An interpolated title ("Piotnet Forms - {$form->settings->form_id}") names a per-site entity the
+	 * flow builder lists at runtime, not a catalog event.
+	 */
+	private static function isInterpolated( $text ) {
+		return false !== strpos( $text, '$' ) || false !== strpos( $text, '{' );
+	}
+
+	/** Heuristic: a short static title, not an interpolated label or an error/notice string. */
 	private static function looksLikeEventName( $text ) {
+		if ( self::isInterpolated( $text ) ) {
+			return false;
+		}
 		$low = strtolower( $text );
 		foreach ( array( 'not installed', 'not active', 'permission', 'invalid', 'error', 'please', 'failed', 'required', 'missing', 'unable', 'select ', 'choose', 'no data' ) as $bad ) {
 			if ( false !== strpos( $low, $bad ) ) {
@@ -526,7 +753,7 @@ final class CatalogScanner {
 	 * @return array<string,string>
 	 */
 	public static function biStaticTaskLabels( $absFile ) {
-		return self::pairTaskTokens( self::read( $absFile ) );
+		return self::pairTaskTokens( self::readPhp( $absFile ) );
 	}
 
 	/**
@@ -618,7 +845,13 @@ final class CatalogScanner {
 				return $ops;
 			}
 		}
-		// Pass 2: an operation list identified by per-entry `is_pro` flags — the operation dropdown
+		// Pass 2: the array the operation `<select>` renders its options from, under whatever name the
+		// integration gave it (WooCommerce `moduleType`, GamiPress `allActions`).
+		$ops = self::parseSelectDrivenOps( $files );
+		if ( $ops ) {
+			return $ops;
+		}
+		// Pass 3: an operation list identified by per-entry `is_pro` flags — the operation dropdown
 		// (e.g. Registration, PostCreation in <X>HelperFunction.js). Field-option dropdowns
 		// (priorities, statuses, languages) carry no is_pro, so they are not matched.
 		foreach ( $files as $file ) {
@@ -629,6 +862,137 @@ final class CatalogScanner {
 		}
 
 		return array();
+	}
+
+	/**
+	 * The operation dropdown resolved through the JSX that renders it: find the `<select>` whose
+	 * `name` is the operation selector the backend switches on, take the array it maps its `<option>`s
+	 * from, and parse that array wherever in the integration's frontend folder it is declared
+	 * (`GamiPress.jsx` declares `allActions`, `GamiPressIntegLayout.jsx` renders it). Anchoring on the
+	 * select is what keeps field-option arrays (statuses, priorities) out of the result.
+	 *
+	 * @param string[] $files
+	 * @return array<int,array{value:string,label:string,isPro:bool,group:string}>
+	 */
+	private static function parseSelectDrivenOps( array $files ) {
+		$sources = array();
+		foreach ( $files as $file ) {
+			$sources[] = self::read( $file );
+		}
+		foreach ( $sources as $src ) {
+			foreach ( self::operationSelectBodies( $src ) as $body ) {
+				$ops = self::selectLiteralOptions( $body );
+				if ( $ops ) {
+					return $ops;
+				}
+				foreach ( self::mappedArrayNames( $body ) as $name ) {
+					foreach ( $sources as $lookup ) {
+						$ops = self::parseNamedArray( $lookup, $name );
+						if ( $ops ) {
+							return $ops;
+						}
+					}
+				}
+			}
+		}
+
+		return array();
+	}
+
+	/**
+	 * Inner markup of every `<select>` whose `name` is the operation selector the backend switches on.
+	 *
+	 * @return string[]
+	 */
+	private static function operationSelectBodies( $contents ) {
+		$selectors = array( 'module', 'mainaction', 'actionname', 'action', 'actiontype', 'maintask', 'selectedtask', 'task', 'operation' );
+		$bodies    = array();
+		if ( ! preg_match_all( '#<select\b([^>]*)>(.*?)</select>#s', $contents, $selects, PREG_SET_ORDER ) ) {
+			return $bodies;
+		}
+		foreach ( $selects as $select ) {
+			if ( preg_match( '/\bname\s*=\s*"([^"]+)"/', $select[1], $nm )
+				&& \in_array( strtolower( $nm[1] ), $selectors, true ) ) {
+				$bodies[] = $select[2];
+			}
+		}
+
+		return $bodies;
+	}
+
+	/**
+	 * Operations written as literal `<option value="task">{__('Create Task')}</option>` children
+	 * instead of a mapped array (Asana). The empty-value placeholder option is not an operation.
+	 *
+	 * @return array<int,array{value:string,label:string,isPro:bool,group:string}>
+	 */
+	private static function selectLiteralOptions( $body ) {
+		$ops = array();
+		if ( ! preg_match_all( '#<option\b([^>]*)>(.*?)</option>#s', $body, $options, PREG_SET_ORDER ) ) {
+			return $ops;
+		}
+		foreach ( $options as $option ) {
+			if ( ! preg_match( '/\bvalue\s*=\s*"([^"]+)"/', $option[0], $vm ) ) {
+				continue;
+			}
+			if ( preg_match( '/__\(\s*([\'"])((?:\\\\.|(?!\1).)*)\1/', $option[2], $lm ) ) {
+				$label = self::unescapeQuoted( $lm[2] );
+			} else {
+				$label = trim( preg_replace( '/\s+/', ' ', wp_strip_all_tags( $option[2] ) ) );
+			}
+			if ( '' === $label || false !== strpos( $label, '{' ) ) {
+				continue;
+			}
+			list( $label, $labelled_pro ) = self::splitProLabel( $label );
+			$ops[]                        = array(
+				'value' => $vm[1],
+				'label' => $label,
+				'isPro' => $labelled_pro,
+				'group' => '',
+			);
+		}
+
+		return $ops;
+	}
+
+	/**
+	 * Names of the arrays a select maps its options from, in source order. A member expression keeps
+	 * its last segment (`gamiPressConf.allActions` => `allActions`).
+	 *
+	 * @return string[]
+	 */
+	private static function mappedArrayNames( $body ) {
+		if ( ! preg_match_all( '/([A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*)\s*\??\.map\s*\(/', $body, $maps ) ) {
+			return array();
+		}
+		$names = array();
+		foreach ( $maps[1] as $expression ) {
+			$parts   = preg_split( '/\??\./', $expression );
+			$names[] = end( $parts );
+		}
+
+		return array_values( array_unique( $names ) );
+	}
+
+	/** Parse a `const|let|var <name> = [ … ]` / `<name>: [ … ]` operation array (bracket-aware). */
+	private static function parseNamedArray( $contents, $name ) {
+		if ( ! preg_match( '/\b' . preg_quote( $name, '/' ) . '\s*(?:=|:)\s*\[/', $contents, $m, PREG_OFFSET_CAPTURE ) ) {
+			return array();
+		}
+		$i     = $m[0][1] + \strlen( $m[0][0] );
+		$len   = \strlen( $contents );
+		$depth = 1;
+		$start = $i;
+		while ( $i < $len && $depth > 0 ) {
+			if ( '[' === $contents[ $i ] ) {
+				++$depth;
+			} elseif ( ']' === $contents[ $i ] ) {
+				--$depth;
+			}
+			++$i;
+		}
+
+		return self::moduleObjects( substr( $contents, $start, $i - $start ) );
 	}
 
 	/** Parse the `modules: [ … ]` / `const modules = [ … ]` operation array (bracket-aware). */
@@ -674,20 +1038,40 @@ final class CatalogScanner {
 		$ops = array();
 		if ( preg_match_all( '/\{[^{}]*\}/', $block, $objs ) ) {
 			foreach ( $objs[0] as $obj ) {
-				if ( ! preg_match( "/\b(?:value|name)\s*:\s*'([^']+)'/", $obj, $vm )
-					|| ! preg_match( "/\blabel\s*:\s*(?:__\(\s*)?'([^']+)'/", $obj, $lm ) ) {
+				// The operation value is a quoted string, or the SCREAMING_CASE constant an integration
+				// defines for it (BuddyBoss `key: CREATE_GROUP_PRO`), whose `_PRO` suffix is the same
+				// tier marker the backend operation enum uses.
+				if ( ! preg_match( '/\b(?:value|name|key)\s*:\s*(?:([\'"])((?:\\\\.|(?!\1).)*)\1|([A-Z][A-Z0-9_]*))/', $obj, $vm ) ) {
 					continue;
 				}
-				$ops[] = array(
-					'value' => $vm[1],
-					'label' => $lm[1],
-					'isPro' => (bool) preg_match( '/\bis_?[pP]ro\s*:\s*true/', $obj ),
+				$label = self::jsLabel( $obj );
+				if ( '' === $label ) {
+					continue;
+				}
+				$constant                     = isset( $vm[3] ) ? $vm[3] : '';
+				$value                        = '' !== $constant ? $constant : self::unescapeQuoted( $vm[2] );
+				list( $label, $labelled_pro ) = self::splitProLabel( $label );
+				$ops[]                        = array(
+					'value' => $value,
+					'label' => $label,
+					'isPro' => $labelled_pro
+						|| ( '' !== $constant && '_PRO' === substr( $constant, -4 ) )
+						|| (bool) preg_match( '/\bis_?[pP]ro\s*:\s*true/', $obj ),
 					'group' => self::firstMatch( "/\bgroup\s*:\s*'([^']+)'/", $obj ),
 				);
 			}
 		}
 
 		return $ops;
+	}
+
+	/** The `label: __('…')` / `label: "…"` text of a JS object entry ('' when it has none). */
+	private static function jsLabel( $obj ) {
+		if ( ! preg_match( '/\blabel\s*:\s*(?:__\(\s*)?([\'"])((?:\\\\.|(?!\1).)*)\1/', $obj, $m ) ) {
+			return '';
+		}
+
+		return self::unescapeQuoted( $m[2] );
 	}
 
 	/**
@@ -721,12 +1105,13 @@ final class CatalogScanner {
 				if ( '' === $key || isset( $map[ $key ] ) ) {
 					continue;
 				}
-				$is_pro = null;
+				list( $label, $labelled_pro ) = self::splitProLabel( $lm[1] );
+				$is_pro                       = $labelled_pro ? true : null;
 				if ( preg_match( '/\bis_?[pP]ro\s*:\s*(true|false)/', $obj, $pm ) ) {
 					$is_pro = 'true' === $pm[1];
 				}
 				$map[ $key ] = array(
-					'label' => $lm[1],
+					'label' => $label,
 					'isPro' => $is_pro,
 				);
 			}
@@ -784,7 +1169,7 @@ final class CatalogScanner {
 
 	/** Trigger catalog names (with isPro) from AllTriggersName.php. */
 	public static function parseAllTriggers( $absFile ) {
-		$contents = self::read( $absFile );
+		$contents = self::readPhp( $absFile );
 		$rows     = array();
 		if ( '' === $contents ) {
 			return $rows;
