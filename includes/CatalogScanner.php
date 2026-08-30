@@ -904,6 +904,16 @@ final class CatalogScanner {
 			$sources[] = self::read( $file );
 		}
 		foreach ( $sources as $src ) {
+			foreach ( self::proGatedArrayNames( $src ) as $name ) {
+				foreach ( $sources as $lookup ) {
+					$ops = self::parseNamedArray( $lookup, $name );
+					if ( $ops ) {
+						return $ops;
+					}
+				}
+			}
+		}
+		foreach ( $sources as $src ) {
 			foreach ( self::operationSelectBodies( $src ) as $body ) {
 				$ops = self::selectLiteralOptions( $body );
 				if ( $ops ) {
@@ -921,6 +931,31 @@ final class CatalogScanner {
 		}
 
 		return array();
+	}
+
+	/**
+	 * Names of the arrays an integration renders through `checkIsPro(isPro, x.is_pro)` — the helper the
+	 * layouts use to Pro-gate an operation option. It marks the operation list wherever it is rendered,
+	 * including the custom dropdowns that take `options={…}` instead of `<option>` children
+	 * (MasterStudy LMS `allActions`). Field-option arrays are never gated this way.
+	 *
+	 * @return string[]
+	 */
+	private static function proGatedArrayNames( $contents ) {
+		$names = array();
+		if ( ! preg_match_all( '/\bcheckIsPro\s*\(/', $contents, $gm, PREG_OFFSET_CAPTURE ) ) {
+			return $names;
+		}
+		foreach ( $gm[0] as $gate ) {
+			$before = substr( $contents, 0, $gate[1] );
+			if ( ! preg_match_all( '/([A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*)\s*\??\.map\s*\(/', $before, $maps ) ) {
+				continue;
+			}
+			$parts   = preg_split( '/\??\./', end( $maps[1] ) );
+			$names[] = end( $parts );
+		}
+
+		return array_values( array_unique( $names ) );
 	}
 
 	/**
@@ -1065,7 +1100,7 @@ final class CatalogScanner {
 				// The operation value is a quoted string, or the SCREAMING_CASE constant an integration
 				// defines for it (BuddyBoss `key: CREATE_GROUP_PRO`), whose `_PRO` suffix is the same
 				// tier marker the backend operation enum uses.
-				if ( ! preg_match( '/\b(?:value|name|key)\s*:\s*(?:([\'"])((?:\\\\.|(?!\1).)*)\1|([A-Z][A-Z0-9_]*))/', $obj, $vm ) ) {
+				if ( ! preg_match( '/\b(?:value|name|key)\s*:\s*(?:([\'"])((?:\\\\.|(?!\1).)*)\1|(?:[A-Za-z_$][\w$]*\.)*([A-Z][A-Z0-9_]*))/', $obj, $vm ) ) {
 					continue;
 				}
 				$label = self::jsLabel( $obj );

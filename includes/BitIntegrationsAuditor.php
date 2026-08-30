@@ -141,8 +141,9 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 				$a_events += $p['action_events'];
 				$a_free   += $p['action_free'];
 				$a_pro    += $p['action_pro'];
-				// App tier = the product's own `is_pro` flag (fully pro), not the per-event split.
-				! empty( $p['action_is_pro'] ) ? ++$aa_pro : ++$aa_free;
+				// App tier = fully pro (the product's own `is_pro` flag, or a catalog whose every
+				// operation is Pro), not the per-event split.
+				! empty( $p['action_fully_pro'] ) ? ++$aa_pro : ++$aa_free;
 			}
 			$rows[] = array(
 				'name'           => $p['name'],
@@ -319,12 +320,15 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			// Action tier is driven by the product's own `is_pro` flag (authoritative "fully pro"),
 			// not re-derived from heuristics: fully pro ⇒ Pro; otherwise the free user can run ≥1
 			// event, so the action contributes Free (and Pro too when it also has a Pro add-on).
-			// A Free trigger module can still gate individual events behind Pro (WooCommerce), so its
-			// per-event split counts towards the tier the same way an action's add-on operations do.
-			$has_free   = ( $p['isTrigger'] && ! $p['triggerPro'] ) || ( $p['isAction'] && ! $action_is_pro );
-			$has_pro    = ( $p['isTrigger'] && ( $p['triggerPro'] || $p['trigger_pro'] > 0 ) ) || ( $p['isAction'] && ( $action_is_pro || $p['action_pro'] > 0 ) );
-			$p['tier']  = ( $has_free && $has_pro ) ? 'both' : ( $has_pro ? 'pro' : 'free' );
-			$p['isPro'] = 'pro' === $p['tier'];
+			// A catalog that marks every one of its operations Pro overrides a stale `is_pro: false`
+			// (SureContact, Brilliant Directories) — a free user can run none of them.
+			// A Free trigger module can likewise gate individual events behind Pro (WooCommerce), so
+			// its per-event split counts towards the tier the same way an action's operations do.
+			$p['action_fully_pro'] = $p['isAction'] && ( $action_is_pro || ( $p['action_events'] > 0 && 0 === $p['action_free'] ) );
+			$has_free              = ( $p['isTrigger'] && ! $p['triggerPro'] ) || ( $p['isAction'] && ! $p['action_fully_pro'] );
+			$has_pro               = ( $p['isTrigger'] && ( $p['triggerPro'] || $p['trigger_pro'] > 0 ) ) || ( $p['isAction'] && ( $p['action_fully_pro'] || $p['action_pro'] > 0 ) );
+			$p['tier']             = ( $has_free && $has_pro ) ? 'both' : ( $has_pro ? 'pro' : 'free' );
+			$p['isPro']            = 'pro' === $p['tier'];
 		}
 		unset( $p );
 
@@ -515,14 +519,18 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	/**
 	 * Action events for a module, with per-event tier reconciled against the product's authoritative
 	 * `is_pro` flag for the action (from SelectAction.jsx). A fully-pro action ⇒ every event is Pro.
-	 * A not-fully-pro action must leave the free user ≥1 runnable event, so if every detected event
+	 * A not-fully-pro action must leave the free user ≥1 runnable event, so if every INFERRED event
 	 * came out Pro the flag overrides and they are treated as Free (covers actions whose frontend
-	 * declares no per-op `is_pro`, e.g. CRMs the Flow builder shows as free).
+	 * declares no per-op `is_pro`, e.g. CRMs the Flow builder shows as free). Tiers the catalog states
+	 * outright — the frontend operation list's own `is_pro`, or a Pro-gated backend module list — are
+	 * never overridden: SureContact and Brilliant Directories mark every operation Pro while their
+	 * SelectAction entry still says `is_pro: false`.
 	 *
 	 * @return array<int,array{name:string,slug:string,group:string,isPro:bool}>
 	 */
 	private function actionEventDetails( $slug, $appIsPro = false ) {
-		$events = $this->actionEventsRaw( $slug );
+		$declared = false;
+		$events   = $this->actionEventsRaw( $slug, $declared );
 		if ( ! $events ) {
 			return $events;
 		}
@@ -532,6 +540,9 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			}
 			unset( $e );
 
+			return $events;
+		}
+		if ( $declared ) {
 			return $events;
 		}
 		$all_pro = true;
@@ -556,13 +567,16 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	 * (authoritative names + tier), then a curated override, then the backend RecordApiHelper /
 	 * Controller operations (read locally). Tiers are reconciled by actionEventDetails().
 	 *
+	 * @param bool $declared set to true when the catalog states each operation's tier itself, so the
+	 *                       caller must not re-derive it
 	 * @return array<int,array{name:string,slug:string,group:string,isPro:bool}>
 	 */
-	private function actionEventsRaw( $slug ) {
+	private function actionEventsRaw( $slug, &$declared = false ) {
 		if ( '' !== $slug ) {
 			$modules = $this->frontendModules( $slug );
 			if ( $modules ) {
-				$events = array();
+				$declared = true;
+				$events   = array();
 				foreach ( $modules as $mod ) {
 					$events[] = array(
 						'name'  => $mod['label'],
@@ -581,7 +595,8 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			if ( '' !== $dir ) {
 				$modules = CatalogScanner::biActionRouteModules( $dir );
 				if ( $modules ) {
-					$events = array();
+					$declared = true;
+					$events   = array();
 					foreach ( $modules as $mod ) {
 						$events[] = array(
 							'name'  => $mod['label'],
