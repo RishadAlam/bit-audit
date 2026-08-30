@@ -4,7 +4,7 @@ Tags: bit integrations, bit flows, audit, integrations, report
 Requires at least: 5.6
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.1.3
+Stable tag: 1.1.4
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -44,6 +44,11 @@ It reads the plugin's frontend source from disk. If the plugin isn't installed, 
 The report is cached. Click **Refresh** to rebuild.
 
 == Changelog ==
+
+= 1.1.4 =
+* Event catalogs are now read from the lists the Flow builder actually offers, correcting 55 platforms. Commented-out entries are no longer counted (WooCommerce dropped 6 deprecated Subscription/Booking events), labels containing an apostrophe are no longer truncated (Ultimate Member showed `User\`), and operation dropdowns are found under whatever name an integration gives them (GamiPress reported 5 transient cache keys as Pro actions; WooCommerce's 5 modules were guessed from the backend).
+* Trigger lists forwarded to another method are now followed, so Voxel reports its 27 named events instead of 21 raw hook slugs; Mail Mint, WP Courseware and Fluent Booking gain their real event names.
+* Event tiers now honour the catalogs' own trailing " Pro" label marker instead of leaving it in the name, correcting the Free/Pro split for BuddyBoss, LearnDash, WooCommerce, Hubspot, Freshdesk and SendPulse.
 
 = 1.1.3 =
 * Bit Integrations trigger events are now read from the module's own task list even when it is declared inside the controller rather than a `StaticData.php`, so Bit CRM reports its 66 named events instead of 58 raw hook names.
