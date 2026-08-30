@@ -609,12 +609,14 @@ final class CatalogScanner {
 	}
 
 	/**
-	 * Event names a trigger's `{platform}/get` route callback exposes to the flow builder, for
-	 * triggers that hard-code the list (e.g. Academy Lms) rather than parsing StaticData::tasks().
-	 * Reads the callback method named in Routes.php and returns the translatable titles it lists.
+	 * Events a trigger's `{platform}/get` route callback exposes to the flow builder, for triggers
+	 * that hard-code the list (e.g. Academy Lms) rather than parsing StaticData::tasks(). Reads the
+	 * callback method named in Routes.php and returns the translatable titles it lists, each with the
+	 * entry's own `'isPro' => true` flag — a Free module can still gate individual events behind Pro
+	 * (WooCommerce offers 27 events, 13 of them Pro).
 	 * Returns [] for callbacks that query the site dynamically (forms/posts have no static names).
 	 *
-	 * @return string[]
+	 * @return array<int,array{name:string,isPro:bool}>
 	 */
 	public static function biTriggerGetEventNames( $absDir ) {
 		$routes = self::readPhp( $absDir . '/Routes.php' );
@@ -635,31 +637,31 @@ final class CatalogScanner {
 		// A task object built positionally (`new Task(SOME_CONST, __('Title'), __('Note'))`) names the
 		// event in its second argument; the third is a description, so the generic sweep below cannot
 		// be used for these.
-		if ( preg_match_all( '/new\s+[A-Za-z_\\\\][\w\\\\]*\s*\(\s*[^,()]+,\s*(?:__\(\s*)?([\'"])((?:\\\\.|(?!\1).)*)\1/s', $body, $cm, PREG_SET_ORDER ) && \count( $cm ) >= 2 ) {
-			foreach ( $cm as $match ) {
-				$name = self::unescapeQuoted( $match[2] );
+		if ( preg_match_all( '/new\s+[A-Za-z_\\\\][\w\\\\]*\s*\(\s*[^,()]+,\s*(?:__\(\s*)?([\'"])((?:\\\\.|(?!\1).)*)\1/s', $body, $cm, PREG_SET_ORDER | PREG_OFFSET_CAPTURE ) && \count( $cm ) >= 2 ) {
+			foreach ( $cm as $index => $match ) {
+				$name = self::unescapeQuoted( $match[2][0] );
 				if ( self::looksLikeEventName( $name ) ) {
-					$names[ $name ] = true;
+					$names[ $name ] = self::entryIsPro( $body, $cm, $index );
 				}
 			}
 		}
 		// Explicit 'title' => '…' entries always win. The string is read escape-aware (1 = quote char,
 		// 2 = body) because titles carry apostrophes — `__('User\'s role change')`.
-		if ( ! $names && preg_match_all( '/[\'"]title[\'"]\s*=>\s*(?:__\(\s*)?([\'"])((?:\\\\.|(?!\1).)*)\1/s', $body, $tm, PREG_SET_ORDER ) ) {
-			foreach ( $tm as $title ) {
-				$name = self::unescapeQuoted( $title[2] );
+		if ( ! $names && preg_match_all( '/[\'"]title[\'"]\s*=>\s*(?:__\(\s*)?([\'"])((?:\\\\.|(?!\1).)*)\1/s', $body, $tm, PREG_SET_ORDER | PREG_OFFSET_CAPTURE ) ) {
+			foreach ( $tm as $index => $title ) {
+				$name = self::unescapeQuoted( $title[2][0] );
 				if ( ! self::isInterpolated( $name ) ) {
-					$names[ $name ] = true;
+					$names[ $name ] = self::entryIsPro( $body, $tm, $index );
 				}
 			}
 		}
 		// Otherwise a hard-coded list of translatable titles (the $types/$tasks array). A single
 		// translatable string is more likely a notice than an event list, so this sweep needs two.
-		if ( ! $names && preg_match_all( '/__\(\s*([\'"])((?:\\\\.|(?!\1).)*)\1/s', $body, $um, PREG_SET_ORDER ) ) {
-			foreach ( $um as $match ) {
-				$title = self::unescapeQuoted( $match[2] );
+		if ( ! $names && preg_match_all( '/__\(\s*([\'"])((?:\\\\.|(?!\1).)*)\1/s', $body, $um, PREG_SET_ORDER | PREG_OFFSET_CAPTURE ) ) {
+			foreach ( $um as $index => $match ) {
+				$title = self::unescapeQuoted( $match[2][0] );
 				if ( self::looksLikeEventName( $title ) ) {
-					$names[ $title ] = true;
+					$names[ $title ] = self::entryIsPro( $body, $um, $index );
 				}
 			}
 			if ( \count( $names ) < 2 ) {
@@ -671,11 +673,33 @@ final class CatalogScanner {
 		if ( ! $names && false !== strpos( $body, "'title'" ) ) {
 			foreach ( self::plainStringList( $body ) as $title ) {
 				if ( self::looksLikeEventName( $title ) ) {
-					$names[ $title ] = true;
+					$names[ $title ] = false;
 				}
 			}
 		}
-		return array_keys( $names );
+		$events = array();
+		foreach ( $names as $name => $is_pro ) {
+			$events[] = array(
+				'name'  => (string) $name,
+				'isPro' => (bool) $is_pro,
+			);
+		}
+
+		return $events;
+	}
+
+	/**
+	 * Whether the list entry a matched title belongs to carries its own `'isPro' => true`. The entry
+	 * runs from that title to the start of the next one, which keeps the flag with the event that
+	 * declares it.
+	 *
+	 * @param array<int,array<int,array{0:string,1:int}>> $matches PREG_OFFSET_CAPTURE set
+	 */
+	private static function entryIsPro( $body, array $matches, $index ) {
+		$start = $matches[ $index ][0][1];
+		$end   = isset( $matches[ $index + 1 ] ) ? $matches[ $index + 1 ][0][1] : \strlen( $body );
+
+		return (bool) preg_match( '/[\'"]isPro[\'"]\s*=>\s*true/', substr( $body, $start, $end - $start ) );
 	}
 
 	/**

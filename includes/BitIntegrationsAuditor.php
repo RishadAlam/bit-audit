@@ -131,8 +131,9 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		foreach ( $platforms as $p ) {
 			if ( $p['isTrigger'] ) {
 				++$trigger_count;
-				$t_events                 += $p['trigger_events'];
-				$p['triggerPro'] ? $t_pro += $p['trigger_events'] : $t_free += $p['trigger_events'];
+				$t_events += $p['trigger_events'];
+				$t_free   += $p['trigger_free'];
+				$t_pro    += $p['trigger_pro'];
 				$p['triggerPro'] ? ++$ta_pro : ++$ta_free;
 			}
 			if ( $p['isAction'] ) {
@@ -249,6 +250,13 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 		$out = array();
 
 		foreach ( $this->triggerRegistry() as $key => $t ) {
+			$events      = $this->triggerEventDetails( $t['slug'], $t['isPro'] );
+			$trigger_pro = 0;
+			foreach ( $events as $e ) {
+				if ( $e['isPro'] ) {
+					++$trigger_pro;
+				}
+			}
 			$out[ $key ] = array(
 				'key'            => $key,
 				'name'           => $t['name'],
@@ -257,7 +265,9 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 				'triggerPro'     => $t['isPro'],
 				'trigger_slug'   => $t['slug'],
 				'action_slug'    => '',
-				'trigger_events' => \count( $this->triggerEventDetails( $t['slug'], $t['isPro'] ) ),
+				'trigger_events' => \count( $events ),
+				'trigger_free'   => \count( $events ) - $trigger_pro,
+				'trigger_pro'    => $trigger_pro,
 				'action_events'  => 0,
 				'action_free'    => 0,
 				'action_pro'     => 0,
@@ -295,6 +305,8 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 					'action_slug'    => $a['slug'],
 					'action_is_pro'  => $a['isPro'],
 					'trigger_events' => 0,
+					'trigger_free'   => 0,
+					'trigger_pro'    => 0,
 					'action_events'  => \count( $events ),
 					'action_free'    => $action_free,
 					'action_pro'     => $action_pro,
@@ -307,8 +319,10 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			// Action tier is driven by the product's own `is_pro` flag (authoritative "fully pro"),
 			// not re-derived from heuristics: fully pro ⇒ Pro; otherwise the free user can run ≥1
 			// event, so the action contributes Free (and Pro too when it also has a Pro add-on).
+			// A Free trigger module can still gate individual events behind Pro (WooCommerce), so its
+			// per-event split counts towards the tier the same way an action's add-on operations do.
 			$has_free   = ( $p['isTrigger'] && ! $p['triggerPro'] ) || ( $p['isAction'] && ! $action_is_pro );
-			$has_pro    = ( $p['isTrigger'] && $p['triggerPro'] ) || ( $p['isAction'] && ( $action_is_pro || $p['action_pro'] > 0 ) );
+			$has_pro    = ( $p['isTrigger'] && ( $p['triggerPro'] || $p['trigger_pro'] > 0 ) ) || ( $p['isAction'] && ( $action_is_pro || $p['action_pro'] > 0 ) );
 			$p['tier']  = ( $has_free && $has_pro ) ? 'both' : ( $has_pro ? 'pro' : 'free' );
 			$p['isPro'] = 'pro' === $p['tier'];
 		}
@@ -463,14 +477,14 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 					);
 				}
 				if ( ! $events ) {
-					foreach ( CatalogScanner::biTriggerGetEventNames( $dir ) as $label ) {
-						list( $name, $eventPro ) = CatalogScanner::splitProLabel( $label );
+					foreach ( CatalogScanner::biTriggerGetEventNames( $dir ) as $event ) {
+						list( $name, $eventPro ) = CatalogScanner::splitProLabel( $event['name'] );
 						$events[]                = array(
 							'name'  => $name,
 							'hook'  => '',
 							'slug'  => '',
 							'group' => '',
-							'isPro' => (bool) $isPro || $eventPro,
+							'isPro' => (bool) $isPro || $eventPro || $event['isPro'],
 						);
 					}
 				}
