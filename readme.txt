@@ -4,7 +4,7 @@ Tags: bit integrations, bit flows, audit, integrations, report
 Requires at least: 5.6
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.1.4
+Stable tag: 1.1.5
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -44,6 +44,12 @@ It reads the plugin's frontend source from disk. If the plugin isn't installed, 
 The report is cached. Click **Refresh** to rebuild.
 
 == Changelog ==
+
+= 1.1.5 =
+* Trigger events now carry their own Pro flag. A Free trigger module can gate individual events behind Pro, so WooCommerce's 27 events are reported as 14 Free and 13 Pro (Restore Product, Restore Order, Coupon Created or Updated, the seven Order Status events, Product Status Changed and the two cart events) instead of all Free, and the platform reads Both again.
+* Per-operation Pro tiers an integration declares are no longer overwritten. SureContact marks all 42 of its operations Pro and Brilliant Directories all 11, while both still declare `is_pro: false` at the catalog level; the free-user reconciliation now applies only to tiers inferred from backend heuristics.
+* Operation lists rendered through a custom dropdown rather than a `select` are now found, so MasterStudy LMS shows its real operation names and its four Pro operations.
+* Trigger events split 112/920 to 99/933 Free/Pro; action events 440/430 to 383/487; action apps 162/48 to 160/50.
 
 = 1.1.4 =
 * Event catalogs are now read from the lists the Flow builder actually offers, correcting 55 platforms. Commented-out entries are no longer counted (WooCommerce dropped 6 deprecated Subscription/Booking events), labels containing an apostrophe are no longer truncated (Ultimate Member showed `User\`), and operation dropdowns are found under whatever name an integration gives them (GamiPress reported 5 transient cache keys as Pro actions; WooCommerce's 5 modules were guessed from the backend).
