@@ -41,11 +41,30 @@ final class Exporter {
 		header( 'Content-Type: text/csv; charset=utf-8' );
 		header( 'Content-Disposition: attachment; filename="' . $filename . '.csv"' );
 
-		$out       = fopen( 'php://output', 'w' );
+		$out = fopen( 'php://output', 'w' );
+		if ( false === $out ) {
+			exit;
+		}
 		$cat       = $report['catalog'];
 		$changelog = $report['changelog'];
 
-		fputcsv( $out, array( 'Section', 'Metric', 'Value', 'Detail' ) );
+		self::row( $out, array( 'Section', 'Metric', 'Value', 'Detail' ) );
+
+		// An unavailable report carries no catalog (plugin not installed, or a built release with no
+		// frontend source). Export the reason it could not be built rather than a sheet of blanks.
+		if ( ! \is_array( $cat ) ) {
+			self::row(
+				$out,
+				array(
+					'Status',
+					'Unavailable',
+					isset( $report['reason'] ) ? $report['reason'] : '',
+					isset( $report['message'] ) ? $report['message'] : '',
+				)
+			);
+			fclose( $out );
+			exit;
+		}
 
 		// Summary.
 		$rows = array(
@@ -57,16 +76,16 @@ final class Exporter {
 			array( 'Catalog', 'Total Action Events', self::scalar( $cat['total_action_events'] ), 'free=' . self::scalar( $cat['split']['free']['action_events'] ) . ' pro=' . self::scalar( $cat['split']['pro']['action_events'] ) ),
 		);
 		foreach ( $rows as $r ) {
-			fputcsv( $out, $r );
+			self::row( $out, $r );
 		}
 
 		// Latest integrations from changelog.
 		if ( $changelog ) {
 			foreach ( $changelog['triggers'] as $item ) {
-				fputcsv( $out, array( 'Latest trigger', $item['name'], $item['events'], $changelog['version'] ) );
+				self::row( $out, array( 'Latest trigger', $item['name'], $item['events'], $changelog['version'] ) );
 			}
 			foreach ( $changelog['actions'] as $item ) {
-				fputcsv( $out, array( 'Latest action', $item['name'], $item['events'], $changelog['version'] ) );
+				self::row( $out, array( 'Latest action', $item['name'], $item['events'], $changelog['version'] ) );
 			}
 		}
 
@@ -79,7 +98,7 @@ final class Exporter {
 			if ( ! isset( $row['isAction'] ) || $row['isAction'] ) {
 				$types[] = 'action';
 			}
-			fputcsv(
+			self::row(
 				$out,
 				array(
 					'Integration',
@@ -92,6 +111,20 @@ final class Exporter {
 
 		fclose( $out );
 		exit;
+	}
+
+	/**
+	 * Write one CSV record.
+	 *
+	 * $escape is passed explicitly because PHP 8.4 deprecates relying on its default, and an empty
+	 * string is the RFC 4180 behaviour spreadsheets expect — the default backslash escape mangles any
+	 * field ending in one.
+	 *
+	 * @param resource                   $out
+	 * @param array<int,string|int|null> $fields
+	 */
+	private static function row( $out, array $fields ) {
+		fputcsv( $out, $fields, ',', '"', '' );
 	}
 
 	private static function scalar( $v ) {

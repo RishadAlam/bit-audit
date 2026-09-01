@@ -39,8 +39,12 @@ final class CatalogScanner {
 		if ( ! is_dir( $absPath ) ) {
 			return $out;
 		}
+		// CATCH_GET_CHILD: an unreadable sub-directory is skipped instead of throwing
+		// UnexpectedValueException out of the scan and taking the admin page down with it.
 		$it = new \RecursiveIteratorIterator(
-			new \RecursiveDirectoryIterator( $absPath, \FilesystemIterator::SKIP_DOTS )
+			new \RecursiveDirectoryIterator( $absPath, \FilesystemIterator::SKIP_DOTS ),
+			\RecursiveIteratorIterator::LEAVES_ONLY,
+			\RecursiveIteratorIterator::CATCH_GET_CHILD
 		);
 		foreach ( $it as $file ) {
 			if ( substr( $file->getFilename(), -\strlen( $suffix ) ) === $suffix ) {
