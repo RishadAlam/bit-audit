@@ -4,7 +4,7 @@ Tags: bit integrations, bit flows, audit, integrations, report
 Requires at least: 5.6
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.1.6
+Stable tag: 1.1.7
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -44,6 +44,9 @@ It reads the plugin's frontend source from disk. If the plugin isn't installed, 
 The report is cached. Click **Refresh** to rebuild.
 
 == Changelog ==
+
+= 1.1.7 =
+* Bit Audit now updates itself from its GitHub releases. A new version appears on the Plugins screen like any other update — one-click update and the auto-update toggle both work — so upgrading no longer means uploading a zip by hand.
 
 = 1.1.6 =
 * A platform that offers both a trigger and an action is no longer listed twice when the two catalogs word its name differently. Power Coupons for WooCommerce / PowerCoupons, ConvertForce Popup Builder / ConvertForce, LearnDash LMS / LearnDash, wpForo Forum / WPForo and Webba Booking Calendar / WebbaBooking each collapse into one Both row carrying its trigger and action events together; platform integrations 329 to 324, with every other count unchanged.
