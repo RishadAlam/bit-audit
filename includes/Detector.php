@@ -175,7 +175,9 @@ final class Detector {
 			}
 		}
 
-		return self::$domainMap = $map;
+		self::$domainMap = $map;
+
+		return self::$domainMap;
 	}
 
 	private static function cacheKey( $family ) {

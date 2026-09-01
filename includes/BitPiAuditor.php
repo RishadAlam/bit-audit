@@ -221,6 +221,7 @@ final class BitPiAuditor implements AuditorInterface {
 			'triggers' => array(),
 			'actions'  => array(),
 		);
+
 		$d = Detector::detect()['bit-pi'];
 		if ( empty( $d['free'] ) || empty( $d['pro'] ) ) {
 			return $out;
