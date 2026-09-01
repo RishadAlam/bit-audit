@@ -60,6 +60,11 @@ composer install            # generates the PSR-4 autoloader + dev tooling
 ```
 The plugin runs even without `composer install` — it falls back to a built‑in PSR‑4 loader.
 
+### Updates
+Bit Audit is not on wordpress.org, so it serves its own updates from this repository's [Releases](https://github.com/RishadAlam/bit-audit/releases). Once installed, a new release shows up on the **Plugins** screen like any other update — one-click update and the auto-update toggle both work.
+
+A source checkout updates through `git pull` instead; leave WordPress's update out of it.
+
 ## Usage
 
 1. Open **Bit Audit** from the admin menu.
@@ -109,8 +114,10 @@ includes/
   BitPiAuditor.php            # Bit Flows (root-machine) catalog + events
   CatalogScanner.php          # shared source-parsing helpers
   Exporter.php                # JSON / CSV export
+  Updater.php                 # GitHub release updates
 templates/                    # dashboard, report-body, detail (presentation only)
 assets/                       # admin.css, admin.js
+lib/plugin-update-checker/    # vendored update-checker library (ships in the release zip)
 ```
 
 ## Contributing

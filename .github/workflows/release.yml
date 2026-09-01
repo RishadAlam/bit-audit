@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify the tag matches the plugin version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          header=$(grep -oP '^\s*\*\s*Version:\s*\K[0-9.]+' bit-audit.php)
+          constant=$(grep -oP "BIT_AUDIT_VERSION',\s*'\K[0-9.]+" bit-audit.php)
+          stable=$(grep -oP '^Stable tag:\s*\K[0-9.]+' readme.txt)
+          echo "tag=$tag header=$header constant=$constant stable=$stable"
+          for value in "$header" "$constant" "$stable"; do
+            if [ "$value" != "$tag" ]; then
+              echo "::error::Version mismatch — tag $tag, found $value" && exit 1
+            fi
+          done
+
+      # The update checker prefers this asset over GitHub's source archive, which would otherwise
+      # install the repository's dev files alongside the plugin.
+      - name: Build bit-audit.zip
+        run: |
+          mkdir -p build/bit-audit
+          rsync -a --exclude-from=.distignore ./ build/bit-audit/
+          cd build && zip -qr ../bit-audit.zip bit-audit
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=$(awk '/^== Changelog ==/ { inlog = 1; next } inlog && /^= / { if (seen++) exit } inlog && seen' readme.txt)
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" bit-audit.zip --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" bit-audit.zip \
+              --title "$GITHUB_REF_NAME" --notes "$notes"
+          fi

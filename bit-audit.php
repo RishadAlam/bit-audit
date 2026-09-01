@@ -12,6 +12,7 @@
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain:       bit-audit
  * Domain Path:       /languages
+ * Update URI:        https://github.com/RishadAlam/bit-audit
  *
  * @package BitApps\Audit
  */
@@ -45,6 +46,8 @@ if ( is_readable( BIT_AUDIT_DIR . 'vendor/autoload.php' ) ) {
 		}
 	);
 }
+
+add_action( 'plugins_loaded', array( Updater::class, 'boot' ) );
 
 add_action(
 	'init',

@@ -1,0 +1,13 @@
+.git/
+.github/
+.impeccable/
+node_modules/
+vendor/
+.distignore
+.gitignore
+.phpcs.cache
+.phpunit.result.cache
+composer.json
+composer.lock
+phpcs.xml.dist
+README.md

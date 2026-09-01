@@ -4,6 +4,8 @@
 
 	<file>.</file>
 	<exclude-pattern>*/vendor/*</exclude-pattern>
+	<!-- Third-party library, vendored verbatim so it ships in the release zip. -->
+	<exclude-pattern>*/lib/*</exclude-pattern>
 	<exclude-pattern>*/node_modules/*</exclude-pattern>
 
 	<arg name="extensions" value="php"/>
