@@ -4,7 +4,7 @@ Tags: bit integrations, bit flows, audit, integrations, report
 Requires at least: 5.6
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.1.5
+Stable tag: 1.1.6
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -44,6 +44,9 @@ It reads the plugin's frontend source from disk. If the plugin isn't installed, 
 The report is cached. Click **Refresh** to rebuild.
 
 == Changelog ==
+
+= 1.1.6 =
+* A platform that offers both a trigger and an action is no longer listed twice when the two catalogs word its name differently. Power Coupons for WooCommerce / PowerCoupons, ConvertForce Popup Builder / ConvertForce, LearnDash LMS / LearnDash, wpForo Forum / WPForo and Webba Booking Calendar / WebbaBooking each collapse into one Both row carrying its trigger and action events together; platform integrations 329 to 324, with every other count unchanged.
 
 = 1.1.5 =
 * Trigger events now carry their own Pro flag. A Free trigger module can gate individual events behind Pro, so WooCommerce's 27 events are reported as 14 Free and 13 Pro (Restore Product, Restore Order, Coupon Created or Updated, the seven Order Status events, Product Status Changed and the two cart events) instead of all Free, and the platform reads Both again.
