@@ -1413,6 +1413,40 @@ final class CatalogScanner {
 		return preg_replace( '/[^a-z0-9]+/', '', $name );
 	}
 
+	/**
+	 * Point every identity a platform answers to (display name, backend module slug, …) at one
+	 * canonical catalog key, so the same platform reached from two catalogs collapses into one row.
+	 * The first claim on an identity wins; later duplicates are left alone.
+	 *
+	 * @param array<string,string> $index      normalized identity => canonical key (by reference)
+	 * @param string[]             $identities
+	 */
+	public static function claimAliases( array &$index, $key, array $identities ) {
+		foreach ( $identities as $identity ) {
+			$normalized = self::normalizeName( $identity );
+			if ( '' !== $normalized && ! isset( $index[ $normalized ] ) ) {
+				$index[ $normalized ] = $key;
+			}
+		}
+	}
+
+	/**
+	 * Canonical key for the first identity already claimed in the index ('' when none is).
+	 *
+	 * @param array<string,string> $index
+	 * @param string[]             $identities
+	 */
+	public static function matchAlias( array $index, array $identities ) {
+		foreach ( $identities as $identity ) {
+			$normalized = self::normalizeName( $identity );
+			if ( '' !== $normalized && isset( $index[ $normalized ] ) ) {
+				return $index[ $normalized ];
+			}
+		}
+
+		return '';
+	}
+
 	/** @param array<string,string> $byName normalized name => slug */
 	private static function matchCatalogSlug( $name, array $byName ) {
 		$key = self::normalizeName( $name );

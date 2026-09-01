@@ -237,7 +237,14 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 
 	/* ------------------------------------------------------------------ */
 
-	/** Build (once) the unified platform catalog keyed by normalized integration name. */
+	/**
+	 * Build (once) the unified platform catalog keyed by normalized integration name.
+	 *
+	 * One platform reaches the audit through two catalogs that need not agree on wording: a trigger
+	 * carries the AllTriggersName label ("Power Coupons for WooCommerce") while its action carries the
+	 * SelectAction type ("PowerCoupons"). Both, though, name the same backend module folder, so rows
+	 * are collapsed on either identity — display name or module slug — instead of the name alone.
+	 */
 	private function platforms() {
 		if ( null !== $this->platforms ) {
 			return $this->platforms;
@@ -248,7 +255,8 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 
 			return $this->platforms;
 		}
-		$out = array();
+		$out   = array();
+		$alias = array();
 
 		foreach ( $this->triggerRegistry() as $key => $t ) {
 			$events      = $this->triggerEventDetails( $t['slug'], $t['isPro'] );
@@ -273,9 +281,19 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 				'action_free'    => 0,
 				'action_pro'     => 0,
 			);
+			CatalogScanner::claimAliases( $alias, $key, array( $t['name'], $t['slug'] ) );
 		}
 
-		foreach ( $this->actionRegistry() as $key => $a ) {
+		foreach ( $this->actionRegistry() as $nameKey => $a ) {
+			$identities = array( $a['name'] );
+			if ( $a['slugExact'] ) {
+				$identities[] = $a['slug'];
+			}
+			$key = CatalogScanner::matchAlias( $alias, $identities );
+			if ( '' === $key ) {
+				$key = $nameKey;
+			}
+
 			$events     = $this->actionEventDetails( $a['slug'], $a['isPro'] );
 			$action_pro = 0;
 			foreach ( $events as $e ) {
@@ -312,6 +330,7 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 					'action_free'    => $action_free,
 					'action_pro'     => $action_pro,
 				);
+				CatalogScanner::claimAliases( $alias, $key, $identities );
 			}
 		}
 
@@ -381,7 +400,7 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 	 * own `is_pro` flag — the authoritative "fully pro" signal (true only when every operation the
 	 * action exposes is Pro); the audit uses it as the action's tier instead of re-deriving it.
 	 *
-	 * @return array<string,array{name:string,slug:string,isPro:bool}> keyed by normalized name
+	 * @return array<string,array{name:string,slug:string,slugExact:bool,isPro:bool}> keyed by normalized name
 	 */
 	private function actionRegistry() {
 		$reg = array();
@@ -390,37 +409,59 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			if ( isset( $reg[ $key ] ) ) {
 				continue;
 			}
+			$resolved    = $this->resolveActionSlug( $entry['name'] );
 			$reg[ $key ] = array(
-				'name'  => $entry['name'],
-				'slug'  => $this->resolveActionSlug( $entry['name'] ),
-				'isPro' => $entry['isPro'],
+				'name'      => $entry['name'],
+				'slug'      => $resolved['slug'],
+				'slugExact' => $resolved['exact'],
+				'isPro'     => $entry['isPro'],
 			);
 		}
 
 		return $reg;
 	}
 
-	/** Resolve a SelectAction display name to its backend Actions folder slug ('' if none). */
+	/**
+	 * Resolve a SelectAction display name to its backend Actions folder slug ('' if none).
+	 *
+	 * `exact` marks a whole-name match against a real folder. The trailing suffix search is a
+	 * best-effort guess ("…Mail" reaching the Mail folder), fine for reading a module's operations
+	 * but far too loose to prove two catalog entries are the same platform, so it is flagged.
+	 *
+	 * @return array{slug:string,exact:bool}
+	 */
 	private function resolveActionSlug( $name ) {
 		$map     = $this->actionDirMap();
 		$key     = CatalogScanner::normalizeName( $name );
 		$aliases = array( 'licensemanagerforwoocommerce' => 'LMFWC' );
 
 		if ( isset( $aliases[ $key ] ) ) {
-			return $aliases[ $key ];
+			return array(
+				'slug'  => $aliases[ $key ],
+				'exact' => true,
+			);
 		}
 		if ( isset( $map[ $key ] ) ) {
-			return $map[ $key ];
+			return array(
+				'slug'  => $map[ $key ],
+				'exact' => true,
+			);
 		}
 		if ( preg_match( '/\(([^)]+)\)/', $name, $m ) ) {
 			$inner = CatalogScanner::normalizeName( $m[1] );
 			if ( isset( $map[ $inner ] ) ) {
-				return $map[ $inner ];
+				return array(
+					'slug'  => $map[ $inner ],
+					'exact' => true,
+				);
 			}
 		}
 		$outer = CatalogScanner::normalizeName( preg_replace( '/\(.*$/', '', $name ) );
 		if ( '' !== $outer && isset( $map[ $outer ] ) ) {
-			return $map[ $outer ];
+			return array(
+				'slug'  => $map[ $outer ],
+				'exact' => true,
+			);
 		}
 		$best = '';
 		$len  = 2;
@@ -431,7 +472,10 @@ final class BitIntegrationsAuditor implements AuditorInterface {
 			}
 		}
 
-		return $best;
+		return array(
+			'slug'  => $best,
+			'exact' => false,
+		);
 	}
 
 	/** Normalized-name => actual folder slug across the locally installed Free + Pro Actions. */
