@@ -29,11 +29,15 @@ jobs:
 
       # The update checker prefers this asset over GitHub's source archive, which would otherwise
       # install the repository's dev files alongside the plugin.
+      # Staged outside the workspace: a staging directory inside it is itself copied by the `./`
+      # rsync, which shipped a stray build/ folder inside the plugin.
       - name: Build bit-audit.zip
         run: |
-          mkdir -p build/bit-audit
-          rsync -a --exclude-from=.distignore ./ build/bit-audit/
-          cd build && zip -qr ../bit-audit.zip bit-audit
+          stage="$RUNNER_TEMP/stage"
+          rm -rf "$stage"
+          mkdir -p "$stage/bit-audit"
+          rsync -a --exclude-from=.distignore ./ "$stage/bit-audit/"
+          ( cd "$stage" && zip -qr "$GITHUB_WORKSPACE/bit-audit.zip" bit-audit )
 
       - name: Publish the release
         env:

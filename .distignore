@@ -4,6 +4,9 @@
 node_modules/
 vendor/
 .distignore
+*.zip
+build/
+stage/
 .gitignore
 .phpcs.cache
 .phpunit.result.cache
