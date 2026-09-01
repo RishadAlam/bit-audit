@@ -4,7 +4,7 @@ Tags: bit integrations, bit flows, audit, integrations, report
 Requires at least: 5.6
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.1.8
+Stable tag: 1.1.9
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -44,6 +44,9 @@ It reads the plugin's frontend source from disk. If the plugin isn't installed, 
 The report is cached. Click **Refresh** to rebuild.
 
 == Changelog ==
+
+= 1.1.9 =
+* The release zip no longer contains a stray `build` folder. Releases since 1.1.7 packaged the build's own staging directory inside the plugin, so every install carried two empty directories that did not belong to it.
 
 = 1.1.8 =
 * CSV export no longer breaks when a report has no catalog. Exporting while a plugin is not installed, or is a built release without its frontend source, produced a sheet of blank cells and a PHP warning for every one; it now exports the reason the report could not be built.
