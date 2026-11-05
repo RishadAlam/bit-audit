@@ -19,6 +19,7 @@ final class BitPiAuditor implements AuditorInterface {
 	private $machinesDir;
 	private $backendDirs;
 	private $hookMap;
+	private $slugFiles;
 	private $sourceError;
 	private $resolved = false;
 
@@ -268,14 +269,17 @@ final class BitPiAuditor implements AuditorInterface {
 	}
 
 	private function rootFileForSlug( $slug ) {
-		foreach ( $this->rootFiles() as $file ) {
-			$root = CatalogScanner::parsePiRoot( CatalogScanner::read( $file ) );
-			if ( $slug === $root['slug'] ) {
-				return $file;
+		if ( null === $this->slugFiles ) {
+			$this->slugFiles = array();
+			foreach ( $this->rootFiles() as $file ) {
+				$root = CatalogScanner::parsePiRoot( CatalogScanner::read( $file ) );
+				if ( ! isset( $this->slugFiles[ $root['slug'] ] ) ) {
+					$this->slugFiles[ $root['slug'] ] = $file;
+				}
 			}
 		}
 
-		return '';
+		return isset( $this->slugFiles[ $slug ] ) ? $this->slugFiles[ $slug ] : '';
 	}
 
 	/** Build (once) a global machineSlug => hook map from every locally installed Hooks.php register(). */
