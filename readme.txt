@@ -4,7 +4,7 @@ Tags: bit integrations, bit flows, audit, integrations, report
 Requires at least: 5.6
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.1.9
+Stable tag: 1.2.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -44,6 +44,11 @@ It reads the plugin's frontend source from disk. If the plugin isn't installed, 
 The report is cached. Click **Refresh** to rebuild.
 
 == Changelog ==
+
+= 1.2.0 =
+* JSON and CSV exports now carry every integration's events — name, WordPress hook, slug, group and tier for each trigger and action — the same detail the integration drill-down page shows. JSON adds `triggers`, `actions` and `found` to each integration plus `exported_at` and `audit_version`; event rows sum exactly to the catalog totals.
+* The CSV export is restructured into separate tables, each with its own header: report and plugin presence, overview metrics with Total / Free / Pro columns, latest integrations, integrations, and one row per event. Scripts that parsed the old four-column layout need updating.
+* Bit Flows event lookups no longer re-read every catalog file per integration, so a full export builds in well under a second.
 
 = 1.1.9 =
 * The release zip no longer contains a stray `build` folder. Releases since 1.1.7 packaged the build's own staging directory inside the plugin, so every install carried two empty directories that did not belong to it.
